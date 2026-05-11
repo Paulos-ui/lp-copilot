@@ -1,4 +1,4 @@
-# 🚀 LP Copilot — AI-Powered LP Portfolio Dashboard
+# 🚀 LP Copilot: AI-Powered LP Portfolio Dashboard
 
 > Built for the LP Agent Hackathon | Meteora DLMM + DAMM V2 | Solana
 
@@ -58,7 +58,7 @@ LP Copilot is an intelligent portfolio tracker and advisor for Liquidity Provide
 ### 1. Clone & Setup
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/lp-copilot
+git clone https://github.com/paulos-ui/lp-copilot
 cd lp-copilot
 ```
 
