@@ -1,0 +1,32 @@
+# ─── SECRETS — NEVER COMMIT THESE ───────────────────────────
+backend/.env
+frontend/.env
+.env
+
+# Keep the example files (no real secrets in them)
+!backend/.env.example
+!frontend/.env.example
+!.env.example
+
+# ─── Dependencies ─────────────────────────────────────────────
+node_modules/
+backend/node_modules/
+frontend/node_modules/
+
+# ─── Build outputs ────────────────────────────────────────────
+frontend/dist/
+frontend/build/
+backend/dist/
+
+# ─── Logs ─────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+
+# ─── OS junk ──────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ─── Editor ───────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
