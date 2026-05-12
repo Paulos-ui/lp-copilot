@@ -9,6 +9,21 @@ import { aiRouter } from "./routes/ai.js";
 dotenv.config();
 
 const app = express();
+
+// Content-Security-Policy middleware — must come before other routes/middleware
+app.use((_req, res, next) => {
+  res.setHeader(
+    "Content-Security-Policy",
+    [
+      "default-src 'self'",
+      "img-src 'self' data:",
+      "style-src 'self' 'unsafe-inline'",
+      "script-src 'self'",
+    ].join("; ")
+  );
+  next();
+});
+
 app.use(cors({ origin: process.env.FRONTEND_URL || "http://localhost:3000" }));
 app.use(express.json());
 
