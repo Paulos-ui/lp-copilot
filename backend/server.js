@@ -9,7 +9,7 @@ import { aiRouter } from "./routes/ai.js";
 dotenv.config();
 
 const app = express();
-app.use(cors({ origin: process.env.FRONTEND_URL || "http://localhost:3000" }));
+app.use(cors({ origin: process.env.FRONTEND_URL || "https://lp1-copilot.vercel.app" }));
 app.use(express.json());
 
 // Health check
