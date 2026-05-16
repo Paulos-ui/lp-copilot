@@ -1,22 +1,18 @@
-import React, { useMemo } from "react";
-import { createRoot } from "react-dom/client";
+import React from "react";
+import ReactDOM from "react-dom/client";
 import { ConnectionProvider, WalletProvider } from "@solana/wallet-adapter-react";
-import { WalletAdapterNetwork } from "@solana/wallet-adapter-base";
 import { WalletModalProvider } from "@solana/wallet-adapter-react-ui";
 import { PhantomWalletAdapter } from "@solana/wallet-adapter-phantom";
 import { clusterApiUrl } from "@solana/web3.js";
 import App from "./App.jsx";
-
-// Import wallet adapter default styles
 import "@solana/wallet-adapter-react-ui/styles.css";
+import "./index.css";
 
-const network = WalletAdapterNetwork.Mainnet;
-const endpoint = import.meta.env.VITE_SOLANA_RPC || clusterApiUrl(network);
+const endpoint = import.meta.env.VITE_SOLANA_RPC || clusterApiUrl("mainnet-beta");
+const wallets = [new PhantomWalletAdapter()];
 
-function Root() {
-  const wallets = useMemo(() => [new PhantomWalletAdapter()], []);
-
-  return (
+ReactDOM.createRoot(document.getElementById("root")).render(
+  <React.StrictMode>
     <ConnectionProvider endpoint={endpoint}>
       <WalletProvider wallets={wallets} autoConnect>
         <WalletModalProvider>
@@ -24,7 +20,5 @@ function Root() {
         </WalletModalProvider>
       </WalletProvider>
     </ConnectionProvider>
-  );
-}
-
-createRoot(document.getElementById("root")).render(<Root />);
+  </React.StrictMode>
+);
