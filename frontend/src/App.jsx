@@ -124,8 +124,8 @@ function AIChat({ positions, overview }) {
       const walletData = positions?.length ? { positions, overview } : null;
       const res = await chatWithAI(msg, walletData);
       setMessages((m) => [...m, { role: "ai", text: res.reply }]);
-    } catch {
-      setMessages((m) => [...m, { role: "ai", text: "⚠ Connection error. Please try again." }]);
+    } catch (err) {
+      setMessages((m) => [...m, { role: "ai", text: `⚠ ${err.message}` }]);
     } finally {
       setLoading(false);
     }
@@ -285,7 +285,7 @@ export default function App() {
   ];
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "220px 1fr", gridTemplateRows: "56px 1fr", minHeight: "100vh" }}>
+    <div style={{ display: "grid", gridTemplateColumns: "220px 1fr", gridTemplateRows: "56px 1fr", height: "100vh", width: "100vw", overflow: "hidden" }}>
 
       {/* Topbar */}
       <header style={{ gridColumn: "1/-1", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 24px", background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>
@@ -310,7 +310,7 @@ export default function App() {
       </nav>
 
       {/* Main Content */}
-      <main style={{ padding: 24, overflowY: "auto", display: "flex", flexDirection: "column", gap: 20 }}>
+      <main style={{ padding: 24, overflowY: "auto", display: "flex", flexDirection: "column", gap: 20, minHeight: 0 }}>
 
         {/* PORTFOLIO */}
         {page === "portfolio" && (
