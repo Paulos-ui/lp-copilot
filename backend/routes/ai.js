@@ -3,135 +3,103 @@ import Anthropic from "@anthropic-ai/sdk";
 
 export const aiRouter = Router();
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+// GET /api/ai/status — diagnose key issues
+aiRouter.get("/status", (_req, res) => {
+  const available = !!process.env.ANTHROPIC_API_KEY;
+  res.json({
+    available,
+    keyPrefix: process.env.ANTHROPIC_API_KEY?.slice(0, 10) + "..." || "NOT SET",
+    message: available ? "AI ready" : "ANTHROPIC_API_KEY not configured on Railway"
+  });
+});
 
-const LP_SYSTEM_PROMPT = `You are LP Copilot, an expert AI advisor for Liquidity Providers on Solana, specializing in Meteora DLMM and DAMM V2 pools. You have deep knowledge of:
-- LP strategies (Spot, Curve, BidAsk distributions)
-- Impermanent loss calculation and mitigation
-- Fee optimization and compounding
-- Pool selection criteria (TVL, volume, fee/TVL ratio, volatility)
-- Zap-in / Zap-out timing
-- When to rebalance positions
+const LP_SYSTEM_PROMPT = `You are LP Copilot, an expert AI advisor for Liquidity Providers on Solana, specializing in Meteora DLMM and DAMM V2 pools. You have deep knowledge of LP strategies, impermanent loss, fee optimization, pool selection, and when to zap in/out. Give direct, actionable advice under 200 words.`;
 
-Always give direct, actionable advice. Use numbers when available. Keep responses concise (under 200 words). Format important figures in bold using **value**.`;
-
-/**
- * POST /api/ai/chat
- * Body: { message, walletData? }
- * walletData: { positions, overview } - optional context from LP Agent
- */
+// POST /api/ai/chat
 aiRouter.post("/chat", async (req, res) => {
   const { message, walletData } = req.body;
   if (!message) return res.status(400).json({ error: "message is required" });
 
+  const key = process.env.ANTHROPIC_API_KEY;
+  if (!key) {
+    return res.status(500).json({
+      error: "ANTHROPIC_API_KEY is not set. Go to Railway → Variables and add it."
+    });
+  }
+
   let userMessage = message;
-
-  // Inject wallet context if provided
   if (walletData) {
-    userMessage = `Context about my portfolio:
-${JSON.stringify(walletData, null, 2)}
-
-My question: ${message}`;
+    userMessage = `My portfolio:\n${JSON.stringify(walletData, null, 2)}\n\nQuestion: ${message}`;
   }
 
   try {
+    const anthropic = new Anthropic({ apiKey: key });
     const response = await anthropic.messages.create({
       model: "claude-sonnet-4-20250514",
       max_tokens: 512,
       system: LP_SYSTEM_PROMPT,
       messages: [{ role: "user", content: userMessage }],
     });
-
     res.json({ reply: response.content[0].text });
   } catch (err) {
+    console.error("Anthropic error:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-/**
- * POST /api/ai/analyze
- * Body: { positions, overview }
- * Returns AI-generated insights about the portfolio
- */
+// POST /api/ai/analyze
 aiRouter.post("/analyze", async (req, res) => {
   const { positions, overview } = req.body;
   if (!positions) return res.status(400).json({ error: "positions is required" });
 
-  const prompt = `Analyze this LP portfolio and give me 3 specific, actionable insights:
+  const key = process.env.ANTHROPIC_API_KEY;
+  if (!key) return res.status(500).json({ error: "ANTHROPIC_API_KEY not set on Railway" });
 
-Open Positions:
-${JSON.stringify(positions, null, 2)}
+  const prompt = `Analyze this LP portfolio and return ONLY a JSON array of exactly 3 insights. Each: {"type":"good"|"warn"|"info","title":"short title","message":"actionable advice with numbers"}. No other text.
 
-${overview ? `Overview Metrics:\n${JSON.stringify(overview, null, 2)}` : ""}
-
-Return ONLY a JSON array with exactly 3 insights. Each insight:
-{
-  "type": "good" | "warn" | "info",
-  "title": "short title",
-  "message": "specific actionable message mentioning pool names and numbers"
-}
-No other text, just the JSON array.`;
+Positions: ${JSON.stringify(positions, null, 2)}
+${overview ? `Overview: ${JSON.stringify(overview, null, 2)}` : ""}`;
 
   try {
+    const anthropic = new Anthropic({ apiKey: key });
     const response = await anthropic.messages.create({
       model: "claude-sonnet-4-20250514",
       max_tokens: 600,
       system: LP_SYSTEM_PROMPT,
       messages: [{ role: "user", content: prompt }],
     });
-
-    let text = response.content[0].text.trim();
-    // Strip possible markdown fences
-    text = text.replace(/```json|```/g, "").trim();
-    const insights = JSON.parse(text);
-    res.json({ insights });
+    let text = response.content[0].text.trim().replace(/```json|```/g, "").trim();
+    res.json({ insights: JSON.parse(text) });
   } catch (err) {
-    // Fallback static insights on parse error
-    res.json({
-      insights: [
-        { type: "info", title: "Analysis ready", message: "Connect your wallet to get personalized insights." }
-      ]
-    });
+    console.error("AI analyze error:", err.message);
+    res.json({ insights: [{ type: "info", title: "Analysis error", message: err.message }] });
   }
 });
 
-/**
- * POST /api/ai/pool-recommendation
- * Body: { pools, riskProfile: 'low' | 'medium' | 'high', budget? }
- * Returns ranked pool recommendations
- */
+// POST /api/ai/pool-recommendation
 aiRouter.post("/pool-recommendation", async (req, res) => {
   const { pools, riskProfile = "medium", budget } = req.body;
   if (!pools?.length) return res.status(400).json({ error: "pools array is required" });
 
-  const prompt = `Given these available pools and a ${riskProfile} risk profile${budget ? ` with $${budget} budget` : ""}, rank the top 3 best pools to enter right now and explain why:
+  const key = process.env.ANTHROPIC_API_KEY;
+  if (!key) return res.status(500).json({ error: "ANTHROPIC_API_KEY not set on Railway" });
 
-Pools:
-${JSON.stringify(pools.slice(0, 20), null, 2)}
+  const prompt = `Given these pools and a ${riskProfile} risk profile${budget ? ` with $${budget}` : ""}, return ONLY a JSON array of top 3 recommendations: [{"poolAddress":"...","pairName":"X/Y","score":85,"reason":"...","strategy":"Spot|Curve|BidAsk","expectedAPR":"X%"}]. No other text.
 
-Return ONLY a JSON array of top 3 recommendations:
-[{
-  "poolAddress": "...",
-  "pairName": "TOKEN0/TOKEN1",
-  "score": 85,
-  "reason": "concise reason",
-  "strategy": "Spot|Curve|BidAsk",
-  "expectedAPR": "X%"
-}]
-No other text.`;
+Pools: ${JSON.stringify(pools.slice(0, 20), null, 2)}`;
 
   try {
+    const anthropic = new Anthropic({ apiKey: key });
     const response = await anthropic.messages.create({
       model: "claude-sonnet-4-20250514",
       max_tokens: 600,
       system: LP_SYSTEM_PROMPT,
       messages: [{ role: "user", content: prompt }],
     });
-
     let text = response.content[0].text.trim().replace(/```json|```/g, "").trim();
-    const recommendations = JSON.parse(text);
-    res.json({ recommendations });
+    res.json({ recommendations: JSON.parse(text) });
   } catch (err) {
+    console.error("AI recommend error:", err.message);
     res.status(500).json({ error: err.message });
   }
 });

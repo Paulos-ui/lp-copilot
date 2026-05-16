@@ -1,32 +1,25 @@
-# ─── SECRETS — NEVER COMMIT THESE ───────────────────────────
-backend/.env
-frontend/.env
-.env
-
-# Keep the example files (no real secrets in them)
-!backend/.env.example
-!frontend/.env.example
-!.env.example
-
-# ─── Dependencies ─────────────────────────────────────────────
+# ── Dependencies ──────────────────────────────
 node_modules/
-backend/node_modules/
-frontend/node_modules/
+.pnp
+.pnp.js
 
-# ─── Build outputs ────────────────────────────────────────────
-frontend/dist/
-frontend/build/
-backend/dist/
+# ── Environment files (NEVER commit these!) ───
+.env
+.env.local
+.env.production
 
-# ─── Logs ─────────────────────────────────────────────────────
-*.log
-npm-debug.log*
+# ── Build outputs ─────────────────────────────
+dist/
+build/
+.vite/
 
-# ─── OS junk ──────────────────────────────────────────────────
+# ── OS & editor junk ──────────────────────────
 .DS_Store
 Thumbs.db
-
-# ─── Editor ───────────────────────────────────────────────────
-.vscode/
 .idea/
+.vscode/
 *.swp
+
+# ── Logs ──────────────────────────────────────
+*.log
+npm-debug.log*
