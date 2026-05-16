@@ -12,7 +12,7 @@ const app = express();
 
 // ── CORS: allow ALL origins (fine for a hackathon) ────────────
 app.use(cors());
-app.options("*", cors());
+app.options("/{*path}", cors());
 
 app.use(express.json());
 
