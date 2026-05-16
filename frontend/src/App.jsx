@@ -1,263 +1,420 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
-import { usePortfolio, usePortfolioMetrics } from "./hooks/usePortfolio";
-import { usePools } from "./hooks/usePools";
-import { useZapIn, useZapOut } from "./hooks/useZap";
-import { chatWithAI } from "./lib/api";
 
-const fmt = (n, dec = 2) =>
-  n == null ? "—" : Number(n).toLocaleString("en-US", { minimumFractionDigits: dec, maximumFractionDigits: dec });
-const fmtUSD = (n) => (n < 0 ? "-$" : "$") + fmt(Math.abs(n));
+const API = import.meta.env.VITE_API_URL || "http://localhost:4000/api";
 
-// ── Metric Card ───────────────────────────────────────────────
-function MetricCard({ label, value, color, delta }) {
+async function apiFetch(path, opts = {}) {
+  const r = await fetch(`${API}${path}`, { headers: { "Content-Type": "application/json" }, ...opts });
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
+  return d;
+}
+
+const usd = (n) => {
+  if (n == null || isNaN(n)) return "$0.00";
+  const abs = Math.abs(Number(n));
+  const s = abs >= 1000 ? (abs / 1000).toFixed(1) + "K" : abs.toFixed(2);
+  return (Number(n) < 0 ? "-$" : "$") + s;
+};
+const pct = (n) => (n >= 0 ? "+" : "") + Number(n).toFixed(2) + "%";
+
+// ── Components ────────────────────────────────────────────────
+
+function StatCard({ label, value, sub, color = "green", glow }) {
+  const colors = { green: "var(--green)", amber: "var(--amber)", blue: "var(--blue)", red: "var(--red)", purple: "var(--purple)" };
+  const c = colors[color] || colors.green;
   return (
-    <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10, padding: "16px 18px" }}>
-      <div style={{ fontSize: 11, color: "var(--text2)", textTransform: "uppercase", letterSpacing: ".08em", fontFamily: "var(--font-mono)", marginBottom: 6 }}>{label}</div>
-      <div style={{ fontSize: 26, fontWeight: 600, fontFamily: "var(--font-mono)", color: `var(--${color})` }}>{value}</div>
-      {delta && <div style={{ fontSize: 11, color: "var(--text2)", marginTop: 4 }}>{delta}</div>}
+    <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "20px 22px", position: "relative", overflow: "hidden" }}>
+      {glow && <div style={{ position: "absolute", top: -20, right: -20, width: 80, height: 80, background: c, borderRadius: "50%", filter: "blur(35px)", opacity: .12 }} />}
+      <div style={{ fontSize: 11, color: "var(--text2)", textTransform: "uppercase", letterSpacing: ".1em", fontFamily: "var(--mono)", marginBottom: 10 }}>{label}</div>
+      <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "var(--mono)", color: c, lineHeight: 1 }}>{value}</div>
+      {sub && <div style={{ fontSize: 11, color: "var(--text2)", marginTop: 8 }}>{sub}</div>}
     </div>
   );
 }
 
-// ── Position Row ──────────────────────────────────────────────
-function PositionRow({ pos, onZapOut }) {
-  const name = `${pos.tokenName0 || "?"}/${pos.tokenName1 || "?"}`;
-  const value = fmtUSD(parseFloat(pos.currentValue) || 0);
-  const fees = fmtUSD((pos.collectedFee || 0) + (parseFloat(pos.unCollectedFee) || 0));
-  const pnl = pos.pnl?.percent != null ? `${pos.pnl.percent >= 0 ? "+" : ""}${fmt(pos.pnl.percent, 2)}%` : "—";
-  const pnlColor = pos.pnl?.percent >= 0 ? "var(--green)" : "var(--red)";
+function Badge({ children, color = "green" }) {
+  const map = {
+    green: { bg: "var(--green-dim)", color: "var(--green)", border: "rgba(0,255,136,.2)" },
+    red: { bg: "var(--red-dim)", color: "var(--red)", border: "rgba(255,77,106,.2)" },
+    amber: { bg: "var(--amber-dim)", color: "var(--amber)", border: "rgba(255,181,71,.2)" },
+    blue: { bg: "var(--blue-dim)", color: "var(--blue)", border: "rgba(77,159,255,.2)" },
+  };
+  const s = map[color] || map.green;
   return (
-    <tr>
-      <td style={{ padding: "12px 0" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div style={{ display: "flex" }}>
-            {[pos.logo0, pos.logo1].map((logo, i) => (
-              <img key={i} src={logo} alt="" width={24} height={24}
-                style={{ borderRadius: "50%", border: "2px solid var(--bg)", marginLeft: i ? -8 : 0 }}
-                onError={(e) => { e.target.style.display = "none"; }} />
-            ))}
-          </div>
-          <div>
-            <div style={{ fontWeight: 500 }}>{name}</div>
-            <div style={{ fontSize: 11, color: "var(--text2)", fontFamily: "var(--font-mono)" }}>
-              {pos.protocol} · {((pos.poolInfo?.fee || 0) / 10000).toFixed(2)}%
-            </div>
-          </div>
-        </div>
-      </td>
-      <td style={{ fontFamily: "var(--font-mono)", padding: "12px 8px" }}>{value}</td>
-      <td style={{ color: "var(--green)", fontFamily: "var(--font-mono)", padding: "12px 8px" }}>{fees}</td>
-      <td style={{ color: pnlColor, fontFamily: "var(--font-mono)", padding: "12px 8px" }}>{pnl}</td>
-      <td style={{ padding: "12px 8px" }}>
-        <span style={{
-          display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 9px",
-          borderRadius: 20, fontSize: 11, fontFamily: "var(--font-mono)",
-          background: pos.inRange ? "var(--green-dim)" : "var(--amber-dim)",
-          color: pos.inRange ? "var(--green)" : "var(--amber)",
-          border: `1px solid ${pos.inRange ? "var(--green-mid)" : "#f5a62340"}`
-        }}>
-          <span style={{ width: 6, height: 6, borderRadius: "50%", background: "currentColor", display: "inline-block" }} />
-          {pos.inRange ? "In Range" : "Out of Range"}
-        </span>
-      </td>
-      <td style={{ padding: "12px 8px" }}>
-        <button onClick={() => onZapOut(pos)} style={{
-          padding: "5px 12px", borderRadius: 6, fontSize: 11, fontFamily: "var(--font-mono)",
-          cursor: "pointer", background: "var(--red-dim)", color: "var(--red)", border: "1px solid #ff4d6a30"
-        }}>Zap Out</button>
-      </td>
-    </tr>
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 10px", borderRadius: 20, fontSize: 11, fontFamily: "var(--mono)", background: s.bg, color: s.color, border: `1px solid ${s.border}` }}>
+      <span style={{ width: 5, height: 5, borderRadius: "50%", background: "currentColor" }} />{children}
+    </span>
   );
 }
 
-// ── Pool Card ─────────────────────────────────────────────────
-function PoolCard({ pool, onZapIn }) {
-  const name = `${pool.token0_symbol || "?"}/${pool.token1_symbol || "?"}`;
-  const apr = pool.tvl && pool.vol_24h && pool.fee
-    ? ((pool.vol_24h * pool.fee / pool.tvl) * 365 * 100).toFixed(1) : "—";
-  const tvl = pool.tvl ? "$" + (pool.tvl / 1000).toFixed(0) + "K" : "—";
-  const vol = pool.vol_24h ? "$" + (pool.vol_24h / 1000).toFixed(0) + "K" : "—";
+function Btn({ children, onClick, variant = "primary", disabled, style = {} }) {
+  const styles = {
+    primary: { background: "var(--green)", color: "#000", border: "none", fontWeight: 700 },
+    danger: { background: "var(--red-dim)", color: "var(--red)", border: "1px solid rgba(255,77,106,.25)" },
+    ghost: { background: "transparent", color: "var(--text2)", border: "1px solid var(--border2)" },
+    outline: { background: "var(--green-dim)", color: "var(--green)", border: "1px solid rgba(0,255,136,.25)" },
+  };
   return (
-    <div style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 8, padding: 14 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
-        <div>
-          <div style={{ fontWeight: 600, marginBottom: 2 }}>{name}</div>
-          <div style={{ fontSize: 11, color: "var(--text2)" }}>{pool.protocol}</div>
+    <button onClick={onClick} disabled={disabled} style={{ padding: "8px 16px", borderRadius: "var(--radius-sm)", fontFamily: "var(--mono)", fontSize: 12, cursor: disabled ? "not-allowed" : "pointer", transition: "all .2s", opacity: disabled ? .6 : 1, ...styles[variant], ...style }}>
+      {children}
+    </button>
+  );
+}
+
+function Table({ cols, rows, empty }) {
+  return (
+    <table style={{ width: "100%", borderCollapse: "collapse" }}>
+      <thead>
+        <tr style={{ borderBottom: "1px solid var(--border)" }}>
+          {cols.map((c) => <th key={c} style={{ fontSize: 10, color: "var(--text3)", textTransform: "uppercase", letterSpacing: ".1em", padding: "0 12px 12px 0", fontFamily: "var(--mono)", fontWeight: 400, textAlign: "left" }}>{c}</th>)}
+        </tr>
+      </thead>
+      <tbody>
+        {rows.length === 0
+          ? <tr><td colSpan={cols.length} style={{ textAlign: "center", padding: 40, color: "var(--text2)", fontSize: 13 }}>{empty}</td></tr>
+          : rows.map((row, i) => (
+            <tr key={i} style={{ borderBottom: "1px solid var(--border)", transition: "background .15s" }}
+              onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255,255,255,.02)"}
+              onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>
+              {row.map((cell, j) => <td key={j} style={{ padding: "14px 12px 14px 0", verticalAlign: "middle" }}>{cell}</td>)}
+            </tr>
+          ))
+        }
+      </tbody>
+    </table>
+  );
+}
+
+function Card({ title, action, children, style = {} }) {
+  return (
+    <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius)", overflow: "hidden", ...style }}>
+      {title && (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px", borderBottom: "1px solid var(--border)" }}>
+          <span style={{ fontFamily: "var(--mono)", fontSize: 13, fontWeight: 600, color: "var(--text)" }}>{title}</span>
+          {action}
         </div>
-        <div style={{ textAlign: "right" }}>
-          <div style={{ fontFamily: "var(--font-mono)", fontSize: 20, fontWeight: 700, color: "var(--green)" }}>{apr}%</div>
-          <div style={{ fontSize: 10, color: "var(--text2)" }}>est. APR</div>
-        </div>
-      </div>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--text2)", marginBottom: 10 }}>
-        <span>TVL: {tvl}</span><span>Vol 24h: {vol}</span>
-      </div>
-      <button onClick={() => onZapIn(pool)} style={{
-        width: "100%", padding: 8, borderRadius: 6, fontSize: 12, fontFamily: "var(--font-mono)",
-        cursor: "pointer", background: "var(--green-dim)", color: "var(--green)", border: "1px solid var(--green-mid)"
-      }}>⚡ Zap In</button>
+      )}
+      <div style={{ padding: 20 }}>{children}</div>
     </div>
   );
 }
 
-// ── AI Chat ───────────────────────────────────────────────────
-function AIChat({ positions, overview }) {
-  const [messages, setMessages] = useState([
-    { role: "ai", text: "Hi! I'm your LP Advisor. Ask me anything — pool selection, when to zap out, how to optimize fees. 🚀" }
-  ]);
-  const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
+// ── Modals ────────────────────────────────────────────────────
 
-  async function send() {
-    const msg = input.trim();
-    if (!msg || loading) return;
-    setInput("");
-    setMessages((m) => [...m, { role: "user", text: msg }]);
-    setLoading(true);
-    try {
-      const walletData = positions?.length ? { positions, overview } : null;
-      const res = await chatWithAI(msg, walletData);
-      setMessages((m) => [...m, { role: "ai", text: res.reply }]);
-    } catch (err) {
-      // Show the REAL error so you know exactly what went wrong
-      setMessages((m) => [...m, { role: "ai", text: `⚠ Error: ${err.message}` }]);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  const QUICK = ["What pools for 1 SOL?", "Explain impermanent loss", "When should I zap out?", "DLMM vs DAMM V2?"];
-
+function Modal({ title, color = "var(--green)", onClose, children }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12, height: "100%" }}>
-      <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden", display: "flex", flexDirection: "column", flex: 1 }}>
-        <div style={{ padding: "14px 18px", borderBottom: "1px solid var(--border)", fontFamily: "var(--font-mono)", fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-          <span style={{ color: "var(--green)" }}>✦</span> AI Advisor — Ask LP Copilot
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.85)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 500, backdropFilter: "blur(4px)" }}>
+      <div style={{ background: "var(--surface)", border: "1px solid var(--border2)", borderRadius: "var(--radius)", padding: 28, width: 440, maxWidth: "95vw", boxShadow: "0 25px 60px rgba(0,0,0,.5)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 22 }}>
+          <div style={{ fontFamily: "var(--mono)", fontSize: 15, fontWeight: 700, color }}>{title}</div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--text2)", cursor: "pointer", fontSize: 18, lineHeight: 1 }}>×</button>
         </div>
-        <div style={{ padding: 18, display: "flex", flexDirection: "column", gap: 10, flex: 1, overflowY: "auto", minHeight: 250 }}>
-          {messages.map((m, i) => (
-            <div key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start", flexDirection: m.role === "user" ? "row-reverse" : "row" }}>
-              <div style={{
-                width: 28, height: 28, borderRadius: "50%", flexShrink: 0,
-                background: m.role === "ai" ? "var(--green-dim)" : "var(--blue-dim)",
-                border: `1px solid ${m.role === "ai" ? "var(--green-mid)" : "#4d9fff55"}`,
-                color: m.role === "ai" ? "var(--green)" : "var(--blue)",
-                display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11
-              }}>
-                {m.role === "ai" ? "✦" : "U"}
-              </div>
-              <div style={{
-                background: "var(--surface2)", border: "1px solid var(--border)",
-                borderRadius: 8, padding: "10px 14px", fontSize: 13, lineHeight: 1.6, maxWidth: "80%",
-                color: m.text.startsWith("⚠") ? "var(--red)" : "var(--text)"
-              }}>
-                {m.text}
-              </div>
-            </div>
-          ))}
-          {loading && (
-            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-              <div style={{ width: 28, height: 28, borderRadius: "50%", background: "var(--green-dim)", border: "1px solid var(--green-mid)", color: "var(--green)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11 }}>✦</div>
-              <div style={{ color: "var(--text2)", fontSize: 12 }}>Thinking...</div>
-            </div>
-          )}
-        </div>
-        <div style={{ padding: "0 18px 18px", display: "flex", gap: 8, flexShrink: 0 }}>
-          <input value={input} onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && send()}
-            placeholder="Ask about pools, IL, strategy..."
-            style={{ flex: 1, background: "var(--surface2)", border: "1px solid var(--border2)", color: "var(--text)", padding: "10px 14px", borderRadius: 8, fontFamily: "var(--font-mono)", fontSize: 13, outline: "none" }} />
-          <button onClick={send} disabled={loading} style={{
-            padding: "10px 18px", borderRadius: 8, fontFamily: "var(--font-mono)", fontSize: 12,
-            cursor: loading ? "not-allowed" : "pointer", background: "var(--green)", color: "#000",
-            border: "none", fontWeight: 700, opacity: loading ? 0.6 : 1
-          }}>Send ↗</button>
-        </div>
-      </div>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        {QUICK.map((q) => (
-          <button key={q} onClick={() => { setInput(q); }}
-            style={{ padding: "6px 14px", borderRadius: 20, fontSize: 12, fontFamily: "var(--font-mono)", cursor: "pointer", background: "var(--green-dim)", color: "var(--green)", border: "1px solid var(--green-mid)" }}>
-            {q}
-          </button>
-        ))}
+        {children}
       </div>
     </div>
   );
 }
 
-// ── Zap In Modal ──────────────────────────────────────────────
+function Field({ label, children }) {
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <label style={{ fontSize: 10, color: "var(--text2)", textTransform: "uppercase", letterSpacing: ".1em", fontFamily: "var(--mono)", display: "block", marginBottom: 6 }}>{label}</label>
+      {children}
+    </div>
+  );
+}
+
+function Input({ value, onChange, type = "text", placeholder, readOnly }) {
+  return (
+    <input type={type} value={value} onChange={onChange} placeholder={placeholder} readOnly={readOnly}
+      style={{ width: "100%", background: "var(--surface2)", border: "1px solid var(--border2)", color: "var(--text)", padding: "10px 14px", borderRadius: "var(--radius-sm)", fontFamily: "var(--mono)", fontSize: 13, outline: "none" }} />
+  );
+}
+
+function Select({ value, onChange, options }) {
+  return (
+    <select value={value} onChange={onChange}
+      style={{ width: "100%", background: "var(--surface2)", border: "1px solid var(--border2)", color: "var(--text)", padding: "10px 14px", borderRadius: "var(--radius-sm)", fontFamily: "var(--mono)", fontSize: 13, outline: "none" }}>
+      {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+    </select>
+  );
+}
+
+function InfoRow({ label, value, valueColor }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", fontSize: 12, color: "var(--text2)" }}>
+      <span>{label}</span>
+      <span style={{ color: valueColor || "var(--text)", fontFamily: "var(--mono)" }}>{value}</span>
+    </div>
+  );
+}
+
 function ZapInModal({ pool, onClose, onConfirm, loading }) {
-  const [inputSOL, setInputSOL] = useState("0.1");
+  const [sol, setSol] = useState("0.5");
   const [strategy, setStrategy] = useState("Spot");
   if (!pool) return null;
   const name = `${pool.token0_symbol || "?"}/${pool.token1_symbol || "?"}`;
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.8)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200 }}>
-      <div style={{ background: "var(--surface)", border: "1px solid var(--border2)", borderRadius: 14, padding: 24, width: 420, maxWidth: "95vw" }}>
-        <div style={{ fontFamily: "var(--font-mono)", fontSize: 15, fontWeight: 700, color: "var(--green)", marginBottom: 18 }}>⚡ Zap In — {name}</div>
-        <label style={{ fontSize: 11, color: "var(--text2)", fontFamily: "var(--font-mono)", textTransform: "uppercase", letterSpacing: ".07em", display: "block", marginBottom: 6 }}>Amount (SOL)</label>
-        <input type="number" value={inputSOL} onChange={(e) => setInputSOL(e.target.value)} step="0.01"
-          style={{ width: "100%", background: "var(--surface2)", border: "1px solid var(--border2)", color: "var(--text)", padding: "10px 14px", borderRadius: 8, fontFamily: "var(--font-mono)", fontSize: 14, outline: "none", marginBottom: 14 }} />
-        <label style={{ fontSize: 11, color: "var(--text2)", fontFamily: "var(--font-mono)", textTransform: "uppercase", letterSpacing: ".07em", display: "block", marginBottom: 6 }}>Strategy</label>
-        <select value={strategy} onChange={(e) => setStrategy(e.target.value)}
-          style={{ width: "100%", background: "var(--surface2)", border: "1px solid var(--border2)", color: "var(--text)", padding: "10px 14px", borderRadius: 8, fontFamily: "var(--font-mono)", fontSize: 13, outline: "none", marginBottom: 18 }}>
-          <option value="Spot">Spot — uniform distribution</option>
-          <option value="Curve">Curve — concentrated around active bin</option>
-          <option value="BidAsk">BidAsk — concentrated at edges</option>
-        </select>
-        <div style={{ background: "var(--surface2)", borderRadius: 8, padding: "12px 14px", marginBottom: 18 }}>
-          {[["Price impact", "<0.01%"], ["Slippage tolerance", "5%"], ["Landing", "Jito bundles ✓"]].map(([k, v]) => (
-            <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", fontSize: 12, color: "var(--text2)" }}>
-              <span>{k}</span><span style={{ color: k === "Landing" ? "var(--green)" : "var(--text)" }}>{v}</span>
-            </div>
-          ))}
-        </div>
-        <div style={{ display: "flex", gap: 10 }}>
-          <button onClick={onClose} style={{ flex: 1, padding: 12, borderRadius: 8, fontFamily: "var(--font-mono)", fontSize: 13, cursor: "pointer", background: "transparent", color: "var(--text2)", border: "1px solid var(--border2)" }}>Cancel</button>
-          <button onClick={() => onConfirm({ poolId: pool.pool, inputSOL: parseFloat(inputSOL), strategy })} disabled={loading}
-            style={{ flex: 1, padding: 12, borderRadius: 8, fontFamily: "var(--font-mono)", fontSize: 13, fontWeight: 700, cursor: loading ? "not-allowed" : "pointer", background: "var(--green)", color: "#000", border: "none", opacity: loading ? 0.7 : 1 }}>
-            {loading ? "Signing..." : "Confirm Zap In ⚡"}
-          </button>
-        </div>
+    <Modal title={`⚡ Zap In — ${name}`} onClose={onClose}>
+      <Field label="Amount (SOL)"><Input type="number" value={sol} onChange={(e) => setSol(e.target.value)} placeholder="0.5" /></Field>
+      <Field label="Strategy">
+        <Select value={strategy} onChange={(e) => setStrategy(e.target.value)} options={[["Spot", "Spot — uniform distribution"], ["Curve", "Curve — concentrated around price"], ["BidAsk", "BidAsk — edge concentrated"]]} />
+      </Field>
+      <div style={{ background: "var(--surface2)", borderRadius: "var(--radius-sm)", padding: "12px 14px", marginBottom: 20 }}>
+        <InfoRow label="Slippage" value="5%" />
+        <InfoRow label="Price impact" value="< 0.01%" />
+        <InfoRow label="Transaction landing" value="Jito bundles" valueColor="var(--green)" />
       </div>
-    </div>
+      <div style={{ display: "flex", gap: 10 }}>
+        <Btn variant="ghost" onClick={onClose} style={{ flex: 1, justifyContent: "center" }}>Cancel</Btn>
+        <Btn onClick={() => onConfirm({ poolId: pool.pool, inputSOL: parseFloat(sol) || 0.1, strategy })} disabled={loading} style={{ flex: 1, justifyContent: "center", padding: 12, fontSize: 13 }}>
+          {loading ? "Signing..." : "Confirm Zap In ⚡"}
+        </Btn>
+      </div>
+    </Modal>
   );
 }
 
-// ── Zap Out Modal ─────────────────────────────────────────────
 function ZapOutModal({ position, onClose, onConfirm, loading }) {
   const [pct, setPct] = useState(100);
   const [output, setOutput] = useState("allBaseToken");
   if (!position) return null;
   const name = `${position.tokenName0 || "?"}/${position.tokenName1 || "?"}`;
-  const value = fmtUSD((parseFloat(position.currentValue) || 0) * pct / 100);
+  const val = usd((parseFloat(position.currentValue) || 0) * pct / 100);
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.8)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200 }}>
-      <div style={{ background: "var(--surface)", border: "1px solid var(--border2)", borderRadius: 14, padding: 24, width: 420, maxWidth: "95vw" }}>
-        <div style={{ fontFamily: "var(--font-mono)", fontSize: 15, fontWeight: 700, color: "var(--red)", marginBottom: 18 }}>↩ Zap Out — {name}</div>
-        <label style={{ fontSize: 11, color: "var(--text2)", fontFamily: "var(--font-mono)", textTransform: "uppercase", letterSpacing: ".07em", display: "block", marginBottom: 6 }}>Withdraw Amount</label>
-        <input type="range" min={10} max={100} step={10} value={pct} onChange={(e) => setPct(Number(e.target.value))} style={{ width: "100%", marginBottom: 4, accentColor: "var(--red)" }} />
-        <div style={{ fontFamily: "var(--font-mono)", fontSize: 22, color: "var(--red)", marginBottom: 14 }}>
-          {pct}% <span style={{ fontSize: 13, color: "var(--text2)" }}>≈ {value}</span>
+    <Modal title={`↩ Zap Out — ${name}`} color="var(--red)" onClose={onClose}>
+      <Field label={`Withdraw — ${pct}% ≈ ${val}`}>
+        <input type="range" min={10} max={100} step={10} value={pct} onChange={(e) => setPct(Number(e.target.value))}
+          style={{ width: "100%", accentColor: "var(--red)", marginBottom: 4 }} />
+      </Field>
+      <Field label="Receive as">
+        <Select value={output} onChange={(e) => setOutput(e.target.value)} options={[["allBaseToken", "SOL (recommended — auto swap)"], ["both", "Both tokens (no swap)"], ["allToken0", `${position.tokenName0} only`], ["allToken1", `${position.tokenName1} only`]]} />
+      </Field>
+      <div style={{ background: "var(--surface2)", borderRadius: "var(--radius-sm)", padding: "12px 14px", marginBottom: 20 }}>
+        <InfoRow label="You receive (est.)" value={val} valueColor="var(--green)" />
+        <InfoRow label="Network fee" value="~0.002 SOL" />
+      </div>
+      <div style={{ display: "flex", gap: 10 }}>
+        <Btn variant="ghost" onClick={onClose} style={{ flex: 1, justifyContent: "center" }}>Cancel</Btn>
+        <Btn variant="danger" onClick={() => onConfirm({ positionId: position.id, bps: pct * 100, output })} disabled={loading}
+          style={{ flex: 1, justifyContent: "center", padding: 12, fontSize: 13, background: "var(--red)", color: "#fff", border: "none" }}>
+          {loading ? "Signing..." : "Confirm Zap Out ↩"}
+        </Btn>
+      </div>
+    </Modal>
+  );
+}
+
+// ── Pages ─────────────────────────────────────────────────────
+
+function OverviewPage({ owner, positions, overview, loading, onZapIn, onZapOut, aiInsights }) {
+  const tvl = positions.reduce((s, p) => s + (parseFloat(p.currentValue) || 0), 0);
+  const fees = positions.reduce((s, p) => s + (p.collectedFee || 0) + (parseFloat(p.unCollectedFee) || 0), 0);
+  const netPnl = overview?.total_pnl?.ALL || 0;
+  const winRate = ((overview?.win_rate?.ALL || 0) * 100).toFixed(0);
+
+  if (!owner) return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: 16 }}>
+      <div style={{ fontSize: 48, marginBottom: 8 }}>◈</div>
+      <div style={{ fontFamily: "var(--mono)", fontSize: 18, fontWeight: 700, color: "var(--green)" }}>Connect your wallet</div>
+      <div style={{ color: "var(--text2)", fontSize: 14 }}>View your LP positions, fees, and AI insights</div>
+      <WalletMultiButton />
+    </div>
+  );
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 14 }}>
+        <StatCard label="Net PnL" value={usd(netPnl)} color={netPnl >= 0 ? "green" : "red"} sub={`${positions.length} open positions`} glow />
+        <StatCard label="Total Value" value={usd(tvl)} color="amber" sub="Across all pools" glow />
+        <StatCard label="Fees Earned" value={usd(fees)} color="blue" sub="Collected + pending" glow />
+        <StatCard label="Win Rate" value={`${winRate}%`} color="purple" sub={`${overview?.total_lp || 0} total positions`} glow />
+      </div>
+
+      {aiInsights.length > 0 && (
+        <div style={{ background: "linear-gradient(135deg, rgba(0,255,136,.03) 0%, rgba(77,159,255,.03) 100%)", border: "1px solid rgba(0,255,136,.12)", borderRadius: "var(--radius)", padding: "18px 20px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+            <span style={{ background: "var(--green-dim)", border: "1px solid rgba(0,255,136,.2)", color: "var(--green)", fontSize: 10, padding: "3px 10px", borderRadius: 20, fontFamily: "var(--mono)", letterSpacing: ".05em" }}>✦ AI INSIGHTS</span>
+            <span style={{ fontFamily: "var(--mono)", fontSize: 12, fontWeight: 600, color: "var(--text)" }}>Portfolio Intelligence</span>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {aiInsights.map((ins, i) => {
+              const cfg = { good: ["var(--green-dim)", "var(--green)", "rgba(0,255,136,.12)", "◉"], warn: ["var(--amber-dim)", "var(--amber)", "rgba(255,181,71,.12)", "⚠"], info: ["var(--blue-dim)", "var(--blue)", "rgba(77,159,255,.12)", "✦"] }[ins.type] || ["var(--blue-dim)", "var(--blue)", "rgba(77,159,255,.12)", "✦"];
+              return (
+                <div key={i} style={{ display: "flex", gap: 12, padding: "12px 14px", borderRadius: "var(--radius-sm)", background: cfg[0], border: `1px solid ${cfg[2]}` }}>
+                  <span style={{ color: cfg[1], fontSize: 16, flexShrink: 0, marginTop: 1 }}>{cfg[3]}</span>
+                  <div style={{ fontSize: 13, lineHeight: 1.6 }}><strong style={{ color: "var(--text)" }}>{ins.title}: </strong><span style={{ color: "var(--text2)" }}>{ins.message}</span></div>
+                </div>
+              );
+            })}
+          </div>
         </div>
-        <label style={{ fontSize: 11, color: "var(--text2)", fontFamily: "var(--font-mono)", textTransform: "uppercase", letterSpacing: ".07em", display: "block", marginBottom: 6 }}>Receive as</label>
-        <select value={output} onChange={(e) => setOutput(e.target.value)}
-          style={{ width: "100%", background: "var(--surface2)", border: "1px solid var(--border2)", color: "var(--text)", padding: "10px 14px", borderRadius: 8, fontFamily: "var(--font-mono)", fontSize: 13, outline: "none", marginBottom: 18 }}>
-          <option value="allBaseToken">SOL (recommended)</option>
-          <option value="both">Both tokens (no swap)</option>
-          <option value="allToken0">{position.tokenName0} only</option>
-          <option value="allToken1">{position.tokenName1} only</option>
-        </select>
-        <div style={{ display: "flex", gap: 10 }}>
-          <button onClick={onClose} style={{ flex: 1, padding: 12, borderRadius: 8, fontFamily: "var(--font-mono)", fontSize: 13, cursor: "pointer", background: "transparent", color: "var(--text2)", border: "1px solid var(--border2)" }}>Cancel</button>
-          <button onClick={() => onConfirm({ positionId: position.id, bps: pct * 100, output })} disabled={loading}
-            style={{ flex: 1, padding: 12, borderRadius: 8, fontFamily: "var(--font-mono)", fontSize: 13, fontWeight: 700, cursor: loading ? "not-allowed" : "pointer", background: "var(--red)", color: "#fff", border: "none", opacity: loading ? 0.7 : 1 }}>
-            {loading ? "Signing..." : "Confirm Zap Out ↩"}
+      )}
+
+      {loading && <div style={{ color: "var(--text2)", textAlign: "center", padding: 30 }}>Loading positions...</div>}
+
+      {positions.length > 0 && (
+        <Card title="Open Positions" action={<Btn variant="outline" onClick={() => {}}>+ Zap Into Pool</Btn>}>
+          <Table
+            cols={["Pool", "Value", "Fees Earned", "PnL", "Status", "Action"]}
+            rows={positions.map((p) => {
+              const name = `${p.tokenName0 || "?"}/${p.tokenName1 || "?"}`;
+              const val = usd(parseFloat(p.currentValue) || 0);
+              const fee = usd((p.collectedFee || 0) + (parseFloat(p.unCollectedFee) || 0));
+              const pl = p.pnl?.percent;
+              return [
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  {[p.logo0, p.logo1].map((l, i) => l ? <img key={i} src={l} width={22} height={22} style={{ borderRadius: "50%", marginLeft: i ? -8 : 0, border: "2px solid var(--bg)" }} onError={(e) => e.target.style.display = "none"} /> : null)}
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>{name}</div>
+                    <div style={{ fontSize: 11, color: "var(--text2)", fontFamily: "var(--mono)" }}>{p.protocol}</div>
+                  </div>
+                </div>,
+                <span style={{ fontFamily: "var(--mono)" }}>{val}</span>,
+                <span style={{ color: "var(--green)", fontFamily: "var(--mono)" }}>{fee}</span>,
+                <span style={{ color: pl >= 0 ? "var(--green)" : "var(--red)", fontFamily: "var(--mono)" }}>{pl != null ? pct(pl) : "—"}</span>,
+                <Badge color={p.inRange ? "green" : "amber"}>{p.inRange ? "In Range" : "Out of Range"}</Badge>,
+                <Btn variant="danger" onClick={() => onZapOut(p)}>Zap Out</Btn>
+              ];
+            })}
+            empty="No open positions"
+          />
+        </Card>
+      )}
+    </div>
+  );
+}
+
+function DiscoverPage({ onZapIn }) {
+  const [pools, setPools] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [sort, setSort] = useState("vol_24h");
+
+  useEffect(() => {
+    setLoading(true);
+    apiFetch(`/pools/discover?sortBy=${sort}&pageSize=18`)
+      .then((d) => setPools(d.data || []))
+      .catch(() => setPools([]))
+      .finally(() => setLoading(false));
+  }, [sort]);
+
+  const apr = (p) => p.tvl && p.vol_24h && p.fee ? ((p.vol_24h * p.fee / p.tvl) * 365 * 100).toFixed(1) : "—";
+  const k = (n) => n ? (n >= 1e6 ? "$" + (n / 1e6).toFixed(1) + "M" : "$" + (n / 1e3).toFixed(0) + "K") : "—";
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div>
+          <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--text2)", textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 4 }}>Pool Discovery</div>
+          <div style={{ fontSize: 22, fontWeight: 700 }}>Top Meteora Pools</div>
+        </div>
+        <div style={{ display: "flex", gap: 6, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: 4 }}>
+          {[["vol_24h", "Volume"], ["tvl", "TVL"], ["fee_tvl_ratio", "Fee/TVL"]].map(([v, l]) => (
+            <button key={v} onClick={() => setSort(v)} style={{ padding: "6px 14px", borderRadius: 6, fontSize: 11, fontFamily: "var(--mono)", cursor: "pointer", border: "none", background: sort === v ? "var(--surface3)" : "transparent", color: sort === v ? "var(--green)" : "var(--text2)", transition: "all .15s" }}>{l}</button>
+          ))}
+        </div>
+      </div>
+      {loading
+        ? <div style={{ color: "var(--text2)", textAlign: "center", padding: 40 }}>Loading pools...</div>
+        : <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
+            {pools.map((p) => (
+              <div key={p.pool} style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: 18, transition: "all .2s", cursor: "pointer" }}
+                onMouseEnter={(e) => { e.currentTarget.style.borderColor = "rgba(0,255,136,.2)"; e.currentTarget.style.transform = "translateY(-2px)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.transform = "none"; }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 3 }}>{p.token0_symbol || "?"}/{p.token1_symbol || "?"}</div>
+                    <div style={{ fontSize: 11, color: "var(--text2)" }}>{p.protocol || "Meteora"}</div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontFamily: "var(--mono)", fontSize: 22, fontWeight: 700, color: "var(--green)" }}>{apr(p)}%</div>
+                    <div style={{ fontSize: 10, color: "var(--text2)" }}>est. APR</div>
+                  </div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 14 }}>
+                  {[["TVL", k(p.tvl)], ["Vol 24h", k(p.vol_24h)]].map(([label, val]) => (
+                    <div key={label} style={{ background: "var(--surface2)", borderRadius: 6, padding: "8px 10px" }}>
+                      <div style={{ fontSize: 10, color: "var(--text2)", marginBottom: 2 }}>{label}</div>
+                      <div style={{ fontFamily: "var(--mono)", fontSize: 13, fontWeight: 600 }}>{val}</div>
+                    </div>
+                  ))}
+                </div>
+                <Btn variant="outline" onClick={() => onZapIn(p)} style={{ width: "100%", justifyContent: "center", padding: 10 }}>⚡ Zap In</Btn>
+              </div>
+            ))}
+          </div>
+      }
+    </div>
+  );
+}
+
+function AIPage({ positions, overview }) {
+  const [msgs, setMsgs] = useState([{ role: "ai", text: "Hi! I'm LP Copilot. Ask me anything about Solana LP strategy, pool selection, impermanent loss, or when to zap in/out. 🚀" }]);
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function send(msg) {
+    const m = (msg || input).trim();
+    if (!m || loading) return;
+    setInput("");
+    setMsgs((s) => [...s, { role: "user", text: m }]);
+    setLoading(true);
+    try {
+      const walletData = positions?.length ? { positions: positions.slice(0, 5), overview } : null;
+      const r = await apiFetch("/ai/chat", { method: "POST", body: JSON.stringify({ message: m, walletData }) });
+      setMsgs((s) => [...s, { role: "ai", text: r.reply }]);
+    } catch (e) {
+      setMsgs((s) => [...s, { role: "ai", text: `⚠ ${e.message}`, error: true }]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const QUICK = ["Best pools for 1 SOL right now?", "Explain impermanent loss simply", "When should I zap out?", "Spot vs Curve strategy?"];
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", gap: 14 }}>
+      <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius)", display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+        <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+          <div style={{ width: 8, height: 8, background: "var(--green)", borderRadius: "50%", boxShadow: "0 0 8px var(--green)" }} />
+          <span style={{ fontFamily: "var(--mono)", fontSize: 13, fontWeight: 600 }}>AI Advisor — Ask LP Copilot</span>
+          {positions.length > 0 && <Badge color="green">{positions.length} positions loaded</Badge>}
+        </div>
+        <div style={{ flex: 1, overflowY: "auto", padding: 20, display: "flex", flexDirection: "column", gap: 12 }}>
+          {msgs.map((m, i) => (
+            <div key={i} style={{ display: "flex", gap: 12, alignItems: "flex-start", flexDirection: m.role === "user" ? "row-reverse" : "row" }}>
+              <div style={{ width: 30, height: 30, borderRadius: "50%", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontFamily: "var(--mono)", background: m.role === "ai" ? "var(--green-dim)" : "var(--blue-dim)", border: `1px solid ${m.role === "ai" ? "rgba(0,255,136,.2)" : "rgba(77,159,255,.2)"}`, color: m.role === "ai" ? "var(--green)" : "var(--blue)" }}>
+                {m.role === "ai" ? "✦" : "U"}
+              </div>
+              <div style={{ background: m.role === "user" ? "var(--surface3)" : "var(--surface2)", border: `1px solid ${m.error ? "rgba(255,77,106,.2)" : "var(--border)"}`, borderRadius: "var(--radius-sm)", padding: "12px 16px", fontSize: 13, lineHeight: 1.7, maxWidth: "78%", color: m.error ? "var(--red)" : "var(--text)" }}>
+                {m.text}
+              </div>
+            </div>
+          ))}
+          {loading && (
+            <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+              <div style={{ width: 30, height: 30, borderRadius: "50%", background: "var(--green-dim)", border: "1px solid rgba(0,255,136,.2)", color: "var(--green)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12 }}>✦</div>
+              <div style={{ color: "var(--text2)", fontSize: 12, fontFamily: "var(--mono)" }}>Thinking<span style={{ animation: "pulse 1s infinite" }}>...</span></div>
+            </div>
+          )}
+        </div>
+        <div style={{ padding: "0 20px 20px", display: "flex", gap: 10, flexShrink: 0 }}>
+          <input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && send()}
+            placeholder="Ask about pools, IL, strategies, timing..."
+            style={{ flex: 1, background: "var(--surface2)", border: "1px solid var(--border2)", color: "var(--text)", padding: "12px 16px", borderRadius: "var(--radius-sm)", fontFamily: "var(--mono)", fontSize: 13, outline: "none" }} />
+          <Btn onClick={() => send()} disabled={loading} style={{ padding: "12px 20px", fontSize: 13 }}>Send ↗</Btn>
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", flexShrink: 0 }}>
+        {QUICK.map((q) => (
+          <button key={q} onClick={() => send(q)} style={{ padding: "7px 14px", borderRadius: 20, fontSize: 12, fontFamily: "var(--mono)", cursor: "pointer", background: "var(--surface)", color: "var(--text2)", border: "1px solid var(--border)", transition: "all .15s" }}
+            onMouseEnter={(e) => { e.target.style.borderColor = "rgba(0,255,136,.25)"; e.target.style.color = "var(--green)"; }}
+            onMouseLeave={(e) => { e.target.style.borderColor = "var(--border)"; e.target.style.color = "var(--text2)"; }}>
+            {q}
           </button>
-        </div>
+        ))}
       </div>
     </div>
   );
@@ -267,229 +424,145 @@ function ZapOutModal({ position, onClose, onConfirm, loading }) {
 export default function App() {
   const { publicKey } = useWallet();
   const owner = publicKey?.toBase58() || null;
-
-  const [page, setPage] = useState("portfolio");
+  const [page, setPage] = useState("overview");
+  const [positions, setPositions] = useState([]);
+  const [overview, setOverview] = useState(null);
+  const [aiInsights, setAiInsights] = useState([]);
+  const [loading, setLoading] = useState(false);
   const [zapInPool, setZapInPool] = useState(null);
   const [zapOutPos, setZapOutPos] = useState(null);
+  const [zapInLoading, setZapInLoading] = useState(false);
+  const [zapOutLoading, setZapOutLoading] = useState(false);
   const [toast, setToast] = useState(null);
 
-  const { positions, overview, aiInsights, loading: portLoading } = usePortfolio(owner);
-  const metrics = usePortfolioMetrics(positions, overview);
-  const { pools, loading: poolsLoading, updateFilter } = usePools();
-  const { zapIn, loading: zapInLoading } = useZapIn();
-  const { zapOut, loading: zapOutLoading } = useZapOut();
+  const showToast = (msg, ok = true) => { setToast({ msg, ok }); setTimeout(() => setToast(null), 4000); };
 
-  function showToast(msg, ok = true) {
-    setToast({ msg, ok });
-    setTimeout(() => setToast(null), 3500);
-  }
+  const loadData = useCallback(async () => {
+    if (!owner) return;
+    setLoading(true);
+    try {
+      const [posRes, ovRes] = await Promise.allSettled([
+        apiFetch(`/positions/open?owner=${owner}`),
+        apiFetch(`/positions/overview?owner=${owner}`)
+      ]);
+      const pos = posRes.status === "fulfilled" ? (posRes.value.data || []) : [];
+      const ov = ovRes.status === "fulfilled" ? (ovRes.value.data || null) : null;
+      setPositions(pos); setOverview(ov);
+      if (pos.length > 0) {
+        try {
+          const ai = await apiFetch("/ai/analyze", { method: "POST", body: JSON.stringify({ positions: pos }) });
+          setAiInsights(ai.insights || []);
+        } catch {}
+      }
+    } catch (e) { showToast(`Load error: ${e.message}`, false); }
+    finally { setLoading(false); }
+  }, [owner]);
+
+  useEffect(() => { loadData(); }, [loadData]);
 
   async function handleZapIn({ poolId, inputSOL, strategy }) {
+    setZapInLoading(true);
     try {
-      const res = await zapIn({ poolId, inputSOL, strategy });
+      const prep = await apiFetch("/zap/in/prepare", { method: "POST", body: JSON.stringify({ poolId, owner, inputSOL, strategy }) });
+      showToast(`⚡ Zap In prepared! Sign in wallet to confirm.`);
       setZapInPool(null);
-      showToast(`✓ Zap In confirmed! Tx: ${res.signature?.slice(0, 8)}...`);
-    } catch (err) {
-      showToast(`✗ ${err.message}`, false);
-    }
+    } catch (e) { showToast(`Zap In failed: ${e.message}`, false); }
+    finally { setZapInLoading(false); }
   }
 
   async function handleZapOut({ positionId, bps, output }) {
+    setZapOutLoading(true);
     try {
-      const res = await zapOut({ positionId, bps, output });
+      const prep = await apiFetch("/zap/out/prepare", { method: "POST", body: JSON.stringify({ positionId, owner, bps, output }) });
+      showToast(`↩ Zap Out prepared! Sign in wallet to confirm.`);
       setZapOutPos(null);
-      showToast(`✓ Zap Out confirmed! Tx: ${res.signature?.slice(0, 8)}...`);
-    } catch (err) {
-      showToast(`✗ ${err.message}`, false);
-    }
+    } catch (e) { showToast(`Zap Out failed: ${e.message}`, false); }
+    finally { setZapOutLoading(false); }
   }
 
   const NAV = [
-    { id: "portfolio", label: "Overview", icon: "◈" },
-    { id: "positions", label: "Positions", icon: "⊞" },
-    { id: "discover", label: "Discover Pools", icon: "⊕" },
-    { id: "ai", label: "AI Advisor", icon: "✦" },
+    { id: "overview", icon: "◈", label: "Overview" },
+    { id: "positions", icon: "⊞", label: "Positions" },
+    { id: "discover", icon: "⊕", label: "Discover" },
+    { id: "ai", icon: "✦", label: "AI Advisor" },
   ];
 
-  const thCol = { fontSize: 10, color: "var(--text3)", textTransform: "uppercase", letterSpacing: ".1em", padding: "0 8px 12px 0", fontFamily: "var(--font-mono)", fontWeight: 400, textAlign: "left" };
-
   return (
-    <>
-      {/* ── Full-screen grid layout ── */}
-      <div style={{
-        display: "grid",
-        gridTemplateColumns: "220px 1fr",
-        gridTemplateRows: "56px 1fr",
-        width: "100vw",
-        height: "100vh",
-        overflow: "hidden",
-        background: "var(--bg)"
-      }}>
+    <div style={{ width: "100vw", height: "100vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
 
-        {/* Topbar */}
-        <header style={{ gridColumn: "1 / -1", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 24px", background: "var(--surface)", borderBottom: "1px solid var(--border)", zIndex: 10 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, fontFamily: "var(--font-mono)", fontSize: 15, fontWeight: 700, color: "var(--green)" }}>
-            <div style={{ width: 8, height: 8, background: "var(--green)", borderRadius: "50%", boxShadow: "0 0 10px var(--green)" }} />
-            LP Copilot
+      {/* ── Topbar ── */}
+      <header style={{ height: 60, background: "var(--surface)", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 24px", flexShrink: 0, zIndex: 50 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ width: 28, height: 28, background: "var(--green-dim)", border: "1px solid rgba(0,255,136,.3)", borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "var(--green)" }}>◈</div>
+            <span style={{ fontFamily: "var(--mono)", fontSize: 15, fontWeight: 700, color: "var(--green)" }}>LP Copilot</span>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <span style={{ background: "#1a2940", border: "1px solid var(--blue)", color: "var(--blue)", fontSize: 11, padding: "3px 10px", borderRadius: 20, fontFamily: "var(--font-mono)" }}>◉ Mainnet</span>
-            <WalletMultiButton />
+          <div style={{ width: 1, height: 20, background: "var(--border2)" }} />
+          <div style={{ display: "flex", gap: 2 }}>
+            {NAV.map((n) => (
+              <button key={n.id} onClick={() => setPage(n.id)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 14px", borderRadius: "var(--radius-sm)", border: "none", cursor: "pointer", fontFamily: "var(--mono)", fontSize: 12, transition: "all .15s", background: page === n.id ? "var(--green-dim)" : "transparent", color: page === n.id ? "var(--green)" : "var(--text2)" }}>
+                <span>{n.icon}</span>{n.label}
+              </button>
+            ))}
           </div>
-        </header>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, background: "rgba(0,255,136,.06)", border: "1px solid rgba(0,255,136,.15)", borderRadius: 20, padding: "4px 12px", fontSize: 11, fontFamily: "var(--mono)", color: "var(--green)" }}>
+            <div style={{ width: 6, height: 6, background: "var(--green)", borderRadius: "50%", boxShadow: "0 0 6px var(--green)" }} />Mainnet
+          </div>
+          {owner && <button onClick={loadData} style={{ background: "none", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", color: "var(--text2)", padding: "6px 12px", cursor: "pointer", fontFamily: "var(--mono)", fontSize: 11 }}>↻ Refresh</button>}
+          <WalletMultiButton />
+        </div>
+      </header>
 
-        {/* Sidebar */}
-        <nav style={{ background: "var(--surface)", borderRight: "1px solid var(--border)", padding: "20px 0", overflowY: "auto" }}>
-          {NAV.map((n) => (
-            <div key={n.id} onClick={() => setPage(n.id)} style={{
-              display: "flex", alignItems: "center", gap: 10, padding: "10px 20px", cursor: "pointer",
-              fontSize: 13, transition: "all .15s",
-              color: page === n.id ? "var(--green)" : "var(--text2)",
-              background: page === n.id ? "var(--green-dim)" : "transparent",
-              borderLeft: `2px solid ${page === n.id ? "var(--green)" : "transparent"}`,
-            }}>
-              <span>{n.icon}</span> {n.label}
-            </div>
-          ))}
-        </nav>
-
-        {/* Main scrollable content */}
-        <main style={{ overflowY: "auto", padding: 24, display: "flex", flexDirection: "column", gap: 20 }}>
-
-          {/* ── PORTFOLIO PAGE ── */}
-          {page === "portfolio" && (
-            <>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
-                <MetricCard label="Net PnL (All Time)" value={fmtUSD(metrics.netPnl)} color="green" delta={owner ? `${metrics.openCount} open positions` : "Connect wallet"} />
-                <MetricCard label="Total Value Locked" value={fmtUSD(metrics.tvl)} color="amber" delta="Across all positions" />
-                <MetricCard label="Fees Earned" value={fmtUSD(metrics.totalFees)} color="blue" delta="Collected + uncollected" />
-                <MetricCard label="Impermanent Loss" value={fmtUSD(metrics.totalIL)} color="red" delta={`Win rate: ${fmt(metrics.winRate, 1)}%`} />
-              </div>
-
-              {/* AI Insights Panel */}
-              {aiInsights.length > 0 && (
-                <div style={{ background: "linear-gradient(135deg,#0d1a14,#0a1520)", border: "1px solid #1a3a28", borderRadius: 10, padding: 18 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
-                    <span style={{ background: "var(--green-dim)", border: "1px solid var(--green-mid)", color: "var(--green)", fontSize: 10, padding: "3px 8px", borderRadius: 20, fontFamily: "var(--font-mono)" }}>✦ AI ADVISOR</span>
-                    <span style={{ fontFamily: "var(--font-mono)", fontSize: 13, fontWeight: 700 }}>Portfolio Intelligence</span>
-                  </div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    {aiInsights.map((ins, i) => (
-                      <div key={i} style={{
-                        display: "flex", gap: 10, padding: "10px 12px", borderRadius: 8,
-                        background: ins.type === "good" ? "var(--green-dim)" : ins.type === "warn" ? "var(--amber-dim)" : "var(--blue-dim)",
-                        border: `1px solid ${ins.type === "good" ? "#00d68f20" : ins.type === "warn" ? "#f5a62320" : "#4d9fff20"}`
-                      }}>
-                        <span style={{ fontSize: 16, flexShrink: 0 }}>{ins.type === "good" ? "◉" : ins.type === "warn" ? "⚠" : "✦"}</span>
-                        <span style={{ fontSize: 12, lineHeight: 1.6 }}><strong>{ins.title}:</strong> {ins.message}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {!owner && (
-                <div style={{ textAlign: "center", padding: 60, color: "var(--text2)", border: "1px dashed var(--border2)", borderRadius: 10 }}>
-                  <div style={{ fontSize: 32, marginBottom: 12 }}>◈</div>
-                  <div style={{ fontFamily: "var(--font-mono)", fontSize: 14 }}>Connect your Phantom wallet to see live LP positions</div>
-                </div>
-              )}
-
-              {portLoading && <div style={{ color: "var(--text2)", textAlign: "center", padding: 20 }}>Loading positions...</div>}
-
-              {positions.length > 0 && (
-                <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 18px", borderBottom: "1px solid var(--border)" }}>
-                    <span style={{ fontFamily: "var(--font-mono)", fontSize: 13, fontWeight: 700 }}>Open Positions</span>
-                    <button onClick={() => setPage("discover")} style={{ padding: "5px 14px", borderRadius: 6, fontSize: 11, fontFamily: "var(--font-mono)", cursor: "pointer", background: "var(--green-dim)", color: "var(--green)", border: "1px solid var(--green-mid)" }}>+ Zap In</button>
-                  </div>
-                  <div style={{ padding: "0 18px" }}>
-                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                      <thead><tr style={{ borderBottom: "1px solid var(--border)" }}>
-                        {["Pool", "Value", "Fees", "PnL", "Status", "Action"].map((h) => <th key={h} style={thCol}>{h}</th>)}
-                      </tr></thead>
-                      <tbody>
-                        {positions.map((pos) => <PositionRow key={pos.id} pos={pos} onZapOut={setZapOutPos} />)}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-
-          {/* ── POSITIONS PAGE ── */}
+      {/* ── Body ── */}
+      <div style={{ flex: 1, overflow: "hidden", display: "flex" }}>
+        <main style={{ flex: 1, overflowY: "auto", padding: 24 }}>
+          {page === "overview" && <OverviewPage owner={owner} positions={positions} overview={overview} loading={loading} onZapIn={setZapInPool} onZapOut={setZapOutPos} aiInsights={aiInsights} />}
           {page === "positions" && (
-            <>
+            <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div style={{ fontFamily: "var(--font-mono)", fontSize: 18, fontWeight: 700 }}>Open Positions</div>
-                <button onClick={() => setPage("discover")} style={{ padding: "7px 16px", borderRadius: 6, fontSize: 12, fontFamily: "var(--font-mono)", cursor: "pointer", background: "var(--green-dim)", color: "var(--green)", border: "1px solid var(--green-mid)" }}>+ Zap Into New Pool</button>
+                <div style={{ fontSize: 22, fontWeight: 700 }}>My Positions</div>
+                <Btn variant="outline" onClick={() => setPage("discover")}>+ Zap Into New Pool</Btn>
               </div>
-              {!owner
-                ? <div style={{ color: "var(--text2)", padding: 40, textAlign: "center", border: "1px dashed var(--border2)", borderRadius: 10 }}>Connect wallet to view positions</div>
-                : positions.length === 0
-                  ? <div style={{ color: "var(--text2)", padding: 40, textAlign: "center", border: "1px dashed var(--border2)", borderRadius: 10 }}>No open positions found</div>
-                  : (
-                    <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10 }}>
-                      <div style={{ padding: "0 18px" }}>
-                        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                          <thead><tr style={{ borderBottom: "1px solid var(--border)" }}>
-                            {["Pool", "Value", "Fees", "PnL", "Status", "Action"].map((h) => <th key={h} style={{ ...thCol, paddingTop: 14 }}>{h}</th>)}
-                          </tr></thead>
-                          <tbody>
-                            {positions.map((pos) => <PositionRow key={pos.id} pos={pos} onZapOut={setZapOutPos} />)}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )
-              }
-            </>
+              <Card>
+                <Table
+                  cols={["Pool", "Value", "Fees", "PnL", "Range", "Action"]}
+                  rows={positions.map((p) => {
+                    const name = `${p.tokenName0 || "?"}/${p.tokenName1 || "?"}`;
+                    const pl = p.pnl?.percent;
+                    return [
+                      <div>
+                        <div style={{ fontWeight: 600 }}>{name}</div>
+                        <div style={{ fontSize: 11, color: "var(--text2)", fontFamily: "var(--mono)" }}>{p.protocol}</div>
+                      </div>,
+                      <span style={{ fontFamily: "var(--mono)" }}>{usd(parseFloat(p.currentValue))}</span>,
+                      <span style={{ color: "var(--green)", fontFamily: "var(--mono)" }}>{usd((p.collectedFee || 0) + (parseFloat(p.unCollectedFee) || 0))}</span>,
+                      <span style={{ color: pl >= 0 ? "var(--green)" : "var(--red)", fontFamily: "var(--mono)" }}>{pl != null ? pct(pl) : "—"}</span>,
+                      <Badge color={p.inRange ? "green" : "amber"}>{p.inRange ? "In Range" : "Out"}</Badge>,
+                      <Btn variant="danger" onClick={() => setZapOutPos(p)}>Zap Out</Btn>
+                    ];
+                  })}
+                  empty={owner ? "No open positions found" : "Connect wallet to view positions"}
+                />
+              </Card>
+            </div>
           )}
-
-          {/* ── DISCOVER PAGE ── */}
-          {page === "discover" && (
-            <>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div style={{ fontFamily: "var(--font-mono)", fontSize: 18, fontWeight: 700 }}>Discover Pools</div>
-                <div style={{ display: "flex", gap: 6 }}>
-                  {[["vol_24h", "By Volume"], ["tvl", "By TVL"], ["fee_tvl_ratio", "Fee/TVL"]].map(([val, label]) => (
-                    <button key={val} onClick={() => updateFilter("sortBy", val)} style={{ padding: "6px 14px", borderRadius: 6, fontSize: 11, fontFamily: "var(--font-mono)", cursor: "pointer", background: "var(--surface2)", color: "var(--text2)", border: "1px solid var(--border)" }}>{label}</button>
-                  ))}
-                </div>
-              </div>
-              {poolsLoading
-                ? <div style={{ color: "var(--text2)", textAlign: "center", padding: 40 }}>Loading pools...</div>
-                : <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
-                    {pools.map((pool) => <PoolCard key={pool.pool} pool={pool} onZapIn={setZapInPool} />)}
-                  </div>
-              }
-            </>
-          )}
-
-          {/* ── AI ADVISOR PAGE ── */}
-          {page === "ai" && <AIChat positions={positions} overview={overview} />}
-
+          {page === "discover" && <DiscoverPage onZapIn={setZapInPool} />}
+          {page === "ai" && <div style={{ height: "calc(100vh - 108px)" }}><AIPage positions={positions} overview={overview} /></div>}
         </main>
       </div>
 
-      {/* Modals (outside grid so they overlay everything) */}
+      {/* Modals */}
       <ZapInModal pool={zapInPool} onClose={() => setZapInPool(null)} onConfirm={handleZapIn} loading={zapInLoading} />
       <ZapOutModal position={zapOutPos} onClose={() => setZapOutPos(null)} onConfirm={handleZapOut} loading={zapOutLoading} />
 
       {/* Toast */}
       {toast && (
-        <div style={{
-          position: "fixed", bottom: 24, right: 24, zIndex: 300,
-          background: toast.ok ? "var(--green)" : "var(--red)",
-          color: toast.ok ? "#000" : "#fff",
-          fontFamily: "var(--font-mono)", fontSize: 12, fontWeight: 700,
-          padding: "10px 20px", borderRadius: 8,
-          boxShadow: "0 4px 20px rgba(0,0,0,.4)"
-        }}>
+        <div style={{ position: "fixed", bottom: 24, right: 24, zIndex: 999, background: toast.ok ? "var(--green)" : "var(--red)", color: toast.ok ? "#000" : "#fff", fontFamily: "var(--mono)", fontSize: 12, fontWeight: 700, padding: "12px 20px", borderRadius: "var(--radius-sm)", boxShadow: "0 8px 30px rgba(0,0,0,.4)", maxWidth: 400 }}>
           {toast.msg}
         </div>
       )}
-    </>
+    </div>
   );
 }
