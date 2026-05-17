@@ -653,13 +653,14 @@ function Activity({ owner }) {
         {loading && <div style={{ textAlign:"center",padding:40,color:"var(--t2)" }}>Loading activity...</div>}
         {!loading && !owner && <div style={{ textAlign:"center",padding:40,color:"var(--t2)" }}>Connect wallet to view your activity</div>}
         {!loading && displayLogs.map((log,i)=>{
-          const type=log.type||log.action||"";
-          const pool=log.pool||log.poolName||"";
-          const amount=log.amount||log.value||0;
+          const type=log.type||log.action||log.actionType||"";
+          const pool=log.pool||log.poolName||log.pairName||log.pair||"";
+          const amount=log.amount||log.value||log.amountUSD||log.usdValue||0;
           const color=txColor(type);
-          const label=txLabel(type);
-          const tx=log.tx||log.txHash||"";
-          const ts=log.time||log.timestamp||Date.now();
+          const label=txLabel(type)||type;
+          const tx=log.tx||log.txHash||log.signature||log.txId||"";
+          const rawTs=log.blockTime||log.createdAt||log.time||log.timestamp||null;
+          const ts=rawTs?(typeof rawTs==="number"?(rawTs>1e10?rawTs:rawTs*1000):new Date(rawTs).getTime()):null;
           return (
             <div key={i} style={{ display:"flex",alignItems:"center",gap:16,padding:"16px 20px",borderBottom:i<displayLogs.length-1?"1px solid var(--b1)":"none",transition:"background .1s" }}
               onMouseEnter={e=>e.currentTarget.style.background="rgba(255,255,255,.02)"}
@@ -669,7 +670,7 @@ function Activity({ owner }) {
               </div>
               <div style={{ flex:1 }}>
                 <div style={{ fontWeight:600,fontSize:13,marginBottom:3 }}>{label}</div>
-                <div style={{ fontSize:12,color:"var(--t2)" }}>{pool} · {timeAgo(ts)}</div>
+                <div style={{ fontSize:12,color:"var(--t2)" }}>{pool}{pool&&ts?" · ":""}{ts?timeAgo(ts):""}</div>
               </div>
               <div style={{ textAlign:"right" }}>
                 <div style={{ fontFamily:"var(--mono)",fontWeight:700,fontSize:14,color,marginBottom:3 }}>{amount?usd(amount):""}</div>
