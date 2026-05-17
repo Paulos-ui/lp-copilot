@@ -1,7 +1,6 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-import Anthropic from "@anthropic-ai/sdk";
 dotenv.config();
 
 const app = express();
@@ -10,8 +9,9 @@ app.use(express.json());
 
 const LP_BASE = "https://api.lpagent.io/open-api/v1";
 const LP_KEY  = process.env.LP_AGENT_API_KEY;
-const AI_KEY  = process.env.ANTHROPIC_API_KEY;
+const GROQ_KEY = process.env.GROQ_API_KEY;
 
+// ── LP Agent helper ───────────────────────────────────────────
 async function lp(method, path, body) {
   const r = await fetch(`${LP_BASE}${path}`, {
     method,
@@ -23,8 +23,34 @@ async function lp(method, path, body) {
   return d;
 }
 
-app.get("/health", (_req, res) => res.json({ ok: true, lp: !!LP_KEY, ai: !!AI_KEY }));
+// ── Groq AI helper ────────────────────────────────────────────
+async function groqChat(messages, system) {
+  if (!GROQ_KEY) throw new Error("GROQ_API_KEY not set on Railway");
+  const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${GROQ_KEY}` },
+    body: JSON.stringify({
+      model: "llama-3.3-70b-versatile",
+      max_tokens: 512,
+      messages: [
+        { role: "system", content: system },
+        ...messages
+      ]
+    })
+  });
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.error?.message || r.statusText);
+  return d.choices[0].message.content;
+}
 
+const LP_SYSTEM = "You are LP Copilot, an expert LP advisor for Solana Meteora pools. Give concise, actionable advice under 150 words. Be specific with numbers and pool names when available.";
+
+// ── Health ────────────────────────────────────────────────────
+app.get("/health", (_req, res) =>
+  res.json({ ok: true, lp: !!LP_KEY, ai: !!GROQ_KEY })
+);
+
+// ── Positions ─────────────────────────────────────────────────
 app.get("/api/positions/open", async (req, res) => {
   try { res.json(await lp("GET", `/lp-positions/opening?owner=${req.query.owner}`)); }
   catch (e) { res.status(500).json({ error: e.message }); }
@@ -42,6 +68,7 @@ app.get("/api/positions/logs", async (req, res) => {
   catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Pools ─────────────────────────────────────────────────────
 app.get("/api/pools/discover", async (req, res) => {
   try {
     const qs = new URLSearchParams({ chain:"SOL", sortBy:"vol_24h", sortOrder:"desc", pageSize:18, ...req.query }).toString();
@@ -53,6 +80,7 @@ app.get("/api/pools/:id/info", async (req, res) => {
   catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Zap In ────────────────────────────────────────────────────
 app.post("/api/zap/in/prepare", async (req, res) => {
   try {
     const { poolId, owner, inputSOL, strategy="Spot", slippageBps=500, rangeWidth=34 } = req.body;
@@ -87,40 +115,32 @@ app.post("/api/zap/out/land", async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.get("/api/ai/status", (_req, res) => res.json({ available: !!AI_KEY }));
+// ── AI ────────────────────────────────────────────────────────
+app.get("/api/ai/status", (_req, res) => res.json({ available: !!GROQ_KEY }));
 
 app.post("/api/ai/chat", async (req, res) => {
-  if (!AI_KEY) return res.status(500).json({ error: "ANTHROPIC_API_KEY not set on Railway" });
   try {
-    const client = new Anthropic({ apiKey: AI_KEY });
     const { message, walletData } = req.body;
-    const content = walletData ? `My portfolio:\n${JSON.stringify(walletData)}\n\nQuestion: ${message}` : message;
-    const r = await client.messages.create({
-      model: "claude-sonnet-4-20250514", max_tokens: 512,
-      system: "You are LP Copilot, an expert LP advisor for Solana Meteora pools. Give concise, actionable advice under 150 words.",
-      messages: [{ role: "user", content }],
-    });
-    res.json({ reply: r.content[0].text });
-  } catch (e) { console.error("AI chat error:", e.message); res.status(500).json({ error: e.message }); }
+    const content = walletData
+      ? `My portfolio:\n${JSON.stringify(walletData)}\n\nQuestion: ${message}`
+      : message;
+    const reply = await groqChat([{ role:"user", content }], LP_SYSTEM);
+    res.json({ reply });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post("/api/ai/analyze", async (req, res) => {
-  if (!AI_KEY) return res.status(500).json({ error: "ANTHROPIC_API_KEY not set" });
   try {
-    const client = new Anthropic({ apiKey: AI_KEY });
-    const r = await client.messages.create({
-      model: "claude-sonnet-4-20250514", max_tokens: 600,
-      system: "Return ONLY valid JSON arrays, no markdown.",
-      messages: [{ role: "user", content: `Return ONLY JSON array of 3 insights [{"type":"good"|"warn"|"info","title":"...","message":"..."}]: ${JSON.stringify(req.body.positions?.slice(0,5))}` }],
-    });
-    let text = r.content[0].text.trim().replace(/```json|```/g,"").trim();
-    res.json({ insights: JSON.parse(text) });
+    const content = `Analyze and return ONLY a JSON array of 3 insights [{"type":"good"|"warn"|"info","title":"...","message":"..."}]. No markdown.\n\nPositions: ${JSON.stringify(req.body.positions?.slice(0,5))}`;
+    const text = await groqChat([{ role:"user", content }], "You are an LP advisor. Return ONLY valid JSON arrays, no markdown fences.");
+    const clean = text.trim().replace(/```json|```/g,"").trim();
+    res.json({ insights: JSON.parse(clean) });
   } catch (e) { res.json({ insights: [{ type:"info", title:"AI Error", message: e.message }] }); }
 });
 
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
-  console.log(`✓ Backend running on port ${PORT}`);
+  console.log(`✓ Backend on port ${PORT}`);
   console.log(`  LP Agent: ${LP_KEY ? "✓" : "✗ MISSING"}`);
-  console.log(`  Anthropic: ${AI_KEY ? "✓" : "✗ MISSING"}`);
+  console.log(`  Groq AI:  ${GROQ_KEY ? "✓" : "✗ MISSING"}`);
 });
