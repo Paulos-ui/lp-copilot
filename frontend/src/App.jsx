@@ -634,10 +634,11 @@ function Activity({ owner }) {
   const txLabel = (type) => {
     if(!type) return "Transaction";
     const t=type.toLowerCase();
-    if(t.includes("zap_in")||t.includes("add")) return "Zap In";
-    if(t.includes("zap_out")||t.includes("remove")) return "Zap Out";
-    if(t.includes("claim")) return "Claim Fees";
+    if(t.includes("zap_in")||t==="add"||t.includes("add_liquidity")||t==="increase") return "Zap In";
+    if(t.includes("zap_out")||t==="remove"||t.includes("remove_liquidity")||t==="decrease") return "Zap Out";
+    if(t.includes("collect")||t.includes("claim")||t==="collectfee"||t==="collect_fee") return "Claim Fees";
     if(t.includes("rebalance")) return "Rebalance";
+    if(t.includes("close")) return "Close Position";
     return type;
   };
 
@@ -659,8 +660,13 @@ function Activity({ owner }) {
           const color=txColor(type);
           const label=txLabel(type)||type;
           const tx=log.tx||log.txHash||log.signature||log.txId||"";
-          const rawTs=log.blockTime||log.createdAt||log.time||log.timestamp||null;
-          const ts=rawTs?(typeof rawTs==="number"?(rawTs>1e10?rawTs:rawTs*1000):new Date(rawTs).getTime()):null;
+          // LP Agent blockTime is Unix seconds — always multiply by 1000
+          const rawTs=log.blockTime||log.onchainTimestamp||log.createdAt||log.time||log.timestamp||null;
+          const ts=rawTs
+            ? typeof rawTs==="number"
+              ? rawTs*1000   // always treat numbers as Unix seconds
+              : new Date(rawTs).getTime()
+            : null;
           return (
             <div key={i} style={{ display:"flex",alignItems:"center",gap:16,padding:"16px 20px",borderBottom:i<displayLogs.length-1?"1px solid var(--b1)":"none",transition:"background .1s" }}
               onMouseEnter={e=>e.currentTarget.style.background="rgba(255,255,255,.02)"}
