@@ -641,16 +641,7 @@ function Activity({ owner }) {
     return type;
   };
 
-  // Mock data for display when no real data
-  const mockLogs = [
-    { type:"ZAP_IN", pool:"SOL/USDC", amount:5000, time:Date.now()-120000, tx:"5xK...a3F" },
-    { type:"CLAIM_FEE", pool:"JTO/SOL", amount:142.30, time:Date.now()-3600000, tx:"9pL...bX2" },
-    { type:"REBALANCE", pool:"BONK/SOL", amount:8420, time:Date.now()-14400000, tx:"3kM...cY7" },
-    { type:"ZAP_OUT", pool:"WIF/SOL", amount:2400, time:Date.now()-86400000, tx:"7fN...d1K" },
-    { type:"ZAP_IN", pool:"JUP/USDC", amount:12000, time:Date.now()-172800000, tx:"2hQ...e8P" },
-  ];
-
-  const displayLogs = logs.length>0 ? logs : (owner ? [] : mockLogs);
+  const displayLogs = logs;
 
   return (
     <div style={{ display:"flex",flexDirection:"column",gap:20 }}>
