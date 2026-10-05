@@ -53,5 +53,10 @@ app.post("/api/ai/chat",async(req,res)=>{ try { const {message,walletData}=req.b
 app.post("/api/ai/analyze",async(req,res)=>{ try { const prompt=`Analyze this Solana LP portfolio. Return ONLY valid JSON, no markdown, in this shape: {"healthScore":0-100,"summary":"one sentence","insights":[{"type":"good|warn|info","title":"short","message":"specific evidence-led sentence","action":"optional short action"}]}. Use at most 3 insights. Data: ${JSON.stringify({positions:req.body.positions?.slice(0,8),overview:req.body.overview}).slice(0,18000)}`; const text=await claude(prompt,"You are a cautious Solana LP risk analyst. Output only valid JSON. Never invent missing values.",1100); const clean=text.replace(/```json|```/g,"").trim(); res.json(JSON.parse(clean)); } catch(e){res.json({healthScore:null,summary:"Portfolio intelligence is temporarily unavailable.",insights:[]});} });
 app.post("/api/ai/pool-recommendation",async(req,res)=>{ try { const pools=(req.body.pools||[]).slice(0,12); const prompt=`Risk preference: ${req.body.riskProfile||"medium"}. Budget: ${req.body.budget||"not specified"}. Rank up to 3 pools from this supplied list only. Return ONLY JSON: {"recommendations":[{"poolId":"exact id","score":0-100,"reason":"one sentence","risk":"Low|Medium|High"}]}. Do not invent metrics. Pools: ${JSON.stringify(pools).slice(0,18000)}`; const text=await claude(prompt,"You rank Solana liquidity pools using only supplied data. Scores are decision-support heuristics, not return predictions. Output valid JSON only.",900); res.json(JSON.parse(text.replace(/```json|```/g,"").trim())); } catch(e){res.status(500).json({error:e.message});} });
 
-const PORT=process.env.PORT||4000;
-app.listen(PORT,()=>console.log(`LP Copilot API :${PORT} | LP ${LP_KEY?"✓":"✗"} | Claude ${CLAUDE_KEY?"✓":"✗"}`));
+export default app;
+
+// Start a persistent server only when this file is executed directly (local development).
+if (process.env.VERCEL !== "1") {
+  const PORT = process.env.PORT || 4000;
+  app.listen(PORT, () => console.log(`LP Copilot API :${PORT} | LP ${LP_KEY ? "✓" : "✗"} | Agent ${CLAUDE_KEY ? "✓" : "✗"}`));
+}

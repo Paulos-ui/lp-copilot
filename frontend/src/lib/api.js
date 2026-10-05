@@ -2,7 +2,7 @@
  * LP Copilot — Frontend API client
  */
 
-const BASE = import.meta.env.VITE_API_URL || "http://localhost:4000/api";
+const BASE = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? "http://localhost:4000/api" : "/api");
 
 async function apiFetch(path, options = {}) {
   const url = `${BASE}${path}`;
@@ -14,7 +14,7 @@ async function apiFetch(path, options = {}) {
     });
   } catch (networkErr) {
     // Network failure — backend unreachable
-    throw new Error(`Cannot reach backend at ${BASE}. Is Railway running? (${networkErr.message})`);
+    throw new Error(`Cannot reach the LP Copilot API at ${BASE}. (${networkErr.message})`);
   }
 
   let data;
