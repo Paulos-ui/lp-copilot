@@ -1,98 +1,46 @@
-# 🚀 LP Copilot: AI Powered LP Portfolio Dashboard
+# LP Copilot
 
-> Built for the LP Agent Hackathon | Meteora DLMM + DAMM V2 | Solana
+**Solana liquidity intelligence that helps LPs understand, decide and act.**
 
-🌐 **Live Demo: [lp-copilot.vercel.app](https://lp-copilot.vercel.app)**
+LP Copilot is an accelerator-ready decision-support workspace for Solana liquidity providers. It combines live wallet/LP data, Claude-powered portfolio reasoning and Meteora execution into one human-controlled workflow: **read → reason → review → approve → prove**.
 
-![LP Copilot Dashboard](assets/dashboard.png)
+## Why it exists
 
----
+Liquidity providers have plenty of dashboards, but still have to translate fragmented position, pool, fee and risk data into a decision. LP Copilot reduces that gap without taking custody or pretending AI can guarantee an outcome.
 
-LP Copilot is an intelligent portfolio tracker and advisor for Liquidity Providers on Solana. It combines real-time LP Agent data with Groq AI to give actionable insights, one-click Zap In/Out, and personalized strategy recommendations.
+## V2 product
 
----
+- Editorial product homepage with a dedicated workspace
+- Live Meteora LP portfolio view
+- Portfolio health and evidence-led Claude insights
+- Opportunity Radar for pool discovery
+- Strategy Studio powered by Anthropic Claude
+- Zap In / Zap Out transaction preparation
+- Wallet approval remains mandatory for every transaction
+- Jito-assisted transaction landing through the LP Agent flow
+- Activity / proof surface for on-chain evidence
+- Responsive UI designed for Build for Breakpoint / Colosseum demos
 
-## ✨ Features
+## Architecture
 
-| Feature | Description |
-|---|---|
-| **Portfolio Dashboard** | Real-time TVL, fees, PnL, IL across all positions |
-| **AI Portfolio Analysis** | AI analyzes your positions and surfaces actionable insights |
-| **Pool Discovery** | Browse Meteora DLMM & DAMM V2 pools with live APR, volume, TVL |
-| **AI Pool Recommendations** | Tell the AI your risk profile — it picks the best pools |
-| **Zap In** | One-click add liquidity to any pool using just SOL |
-| **Zap Out** | Withdraw with preview quotes, choose output token |
-| **AI Advisor Chat** | Ask LP strategy questions with your full portfolio as context |
-| **Transaction History** | Full log of all real on-chain LP activity |
-
----
-
-## 🛠️ Tech Stack
-
-| Layer | Tech |
-|---|---|
-| Frontend | React 18, Vite, Custom SVG Charts |
-| Backend | Node.js, Express 4 |
-| AI | Groq API (Llama 3.3 70B) |
-| Blockchain | Solana Wallet Adapter, @solana/web3.js |
-| LP Data | LP Agent Open API (12 endpoints) |
-| TX Landing | Jito Bundles |
-
----
-
-## 📡 LP Agent API Endpoints Used
-
-| Endpoint | Purpose |
-|---|---|
-| `GET /lp-positions/opening` | Open positions for wallet |
-| `GET /lp-positions/overview` | Portfolio metrics and win rate |
-| `GET /lp-positions/revenue` | PnL over time (7D/1M) |
-| `GET /lp-positions/logs` | Transaction history |
-| `GET /pools/discover` | Pool discovery with filters |
-| `GET /pools/:id/info` | Pool details and active bin |
-| `GET /pools/:id/top-lpers` | Top LP providers (Premium) |
-| `POST /pools/:id/add-tx` | **Zap-In** — generate unsigned txs |
-| `POST /pools/landing-add-tx` | **Zap-In** — land via Jito bundles |
-| `POST /position/decrease-quotes` | **Zap-Out** — preview quotes |
-| `POST /position/decrease-tx` | **Zap-Out** — generate unsigned txs |
-| `POST /position/landing-decrease-tx` | **Zap-Out** — land via Jito bundles |
-
----
-
-## 📁 Project Structure
-
-```
-lp-copilot/
-├── backend/
-│   ├── server.js          ← Express API (all routes inline)
-│   ├── package.json
-│   ├── railway.json       ← Railway deployment config
-│   └── .env               ← Your secret keys (never on GitHub)
-├── frontend/
-│   ├── src/
-│   │   ├── App.jsx        ← Full React app (dashboard, pools, AI, activity)
-│   │   ├── index.css      ← Global styles
-│   │   └── main.jsx       ← Wallet adapter providers
-│   ├── index.html
-│   ├── vite.config.js
-│   └── package.json
-├── assets/
-│   └── dashboard.png      ← App screenshot
-└── README.md
+```text
+Solana wallet
+    │
+    ▼
+React + Vite workspace
+    │
+    ├── Portfolio / pools ──► Express API ──► LP Agent / Meteora data
+    │
+    ├── Strategy context ───► Express API ──► Anthropic Claude
+    │
+    └── Prepared tx ────────► wallet approval ──► Jito / Solana
 ```
 
----
+The backend keeps provider keys server-side. Claude receives bounded portfolio context and is instructed to distinguish data from inference, avoid guaranteed-return language, and keep wallet approval in the loop.
 
-## 🚀 Quick Start
+## Local setup
 
-### 1. Clone
-
-```bash
-git clone https://github.com/Paulos-ui/lp-copilot
-cd lp-copilot
-```
-
-### 2. Backend Setup
+### Backend
 
 ```bash
 cd backend
@@ -100,23 +48,22 @@ npm install
 ```
 
 Create `backend/.env`:
-```
+
+```env
 LP_AGENT_API_KEY=your_lp_agent_key
-GROQ_API_KEY=your_groq_key
+ANTHROPIC_API_KEY=your_anthropic_key
+CLAUDE_MODEL=claude-sonnet-4-5
 FRONTEND_URL=http://localhost:3000
 PORT=4000
 ```
 
-Get your keys:
-- **LP Agent** → [portal.lpagent.io](https://portal.lpagent.io) then DM [@thanhle27](https://t.me/thanhle27)
-- **Groq** → [console.groq.com](https://console.groq.com) (free)
+Run:
 
 ```bash
-npm start
-# Backend on http://localhost:4000
+npm run dev
 ```
 
-### 3. Frontend Setup
+### Frontend
 
 ```bash
 cd frontend
@@ -124,73 +71,48 @@ npm install
 ```
 
 Create `frontend/.env`:
-```
+
+```env
 VITE_API_URL=http://localhost:4000/api
+VITE_SOLANA_RPC=https://your-solana-rpc.example
 ```
+
+Run:
 
 ```bash
 npm run dev
-# Frontend on http://localhost:3000
 ```
 
----
+## Production deployment
 
-## 🌐 Deployment
+**Backend:** deploy `backend/` to Railway or another Node host and set the backend environment variables.
 
-| Service | Purpose | Config |
-|---|---|---|
-| **Railway** | Backend API | Root Directory: `backend`, Start: `node server.js` |
-| **Vercel** | Frontend | Root Directory: `frontend`, Framework: Vite |
+**Frontend:** deploy `frontend/` to Vercel and set:
 
-**Railway Variables:**
-```
-LP_AGENT_API_KEY = your_key
-GROQ_API_KEY     = your_key
+```env
+VITE_API_URL=https://YOUR-BACKEND/api
+VITE_SOLANA_RPC=https://YOUR-PRODUCTION-RPC
 ```
 
-**Vercel Variables:**
-```
-VITE_API_URL = https://your-backend.railway.app/api
-```
+## Core execution flow
 
----
+### Zap In
 
-## 🔄 Zap In Flow
+1. User selects a pool and SOL amount.
+2. Backend asks LP Agent for pool state and prepared Meteora transactions.
+3. Frontend presents the wallet signing request.
+4. User explicitly signs.
+5. Signed transactions are landed through the Jito-enabled LP Agent endpoint.
+6. Result can be verified on Solana.
 
-```
-User enters SOL amount
-        ↓
-GET /pools/:id/info  →  find active bin
-        ↓
-POST /pools/:id/add-tx  →  unsigned transactions
-        ↓
-wallet.signTransaction()  →  signed transactions
-        ↓
-POST /pools/landing-add-tx  →  Jito bundles  →  On-chain ✅
-```
+### Zap Out
 
-## 🔄 Zap Out Flow
+The same human-in-the-loop pattern is used for position reduction: prepare → review → sign → land → verify.
 
-```
-User selects position + %
-        ↓
-POST /position/decrease-quotes  →  preview amount
-        ↓
-POST /position/decrease-tx  →  unsigned transactions
-        ↓
-wallet.signTransaction()  →  signed transactions
-        ↓
-POST /position/landing-decrease-tx  →  Jito  →  On-chain ✅
-```
+## AI safety / product guardrails
 
----
+Claude is a decision-support layer, not an autonomous custodian. AI output can be incomplete or wrong. LP Copilot keeps risk language visible and requires the user to verify transaction details before signing. Scores and recommendations are heuristics, not return forecasts.
 
-## 🏆 Hackathon Submission
+## Built for
 
-- ✅ Uses 12 LP Agent API endpoints
-- ✅ Zap-In integrated (generate + land via Jito)
-- ✅ Zap-Out integrated (quotes + generate + land via Jito)
-- ✅ AI advisor powered by real LP Agent portfolio data
-- ✅ Live demo at [lp-copilot.vercel.app](https://lp-copilot.vercel.app)
-
-Built with ❤️ for the LP Agent Hackathon
+LP Copilot V2 is being developed for the Build for Breakpoint / Colosseum path in 2026, with a focus on a working Solana product, real-user feedback, retention and a five-minute demo that shows the full product loop.

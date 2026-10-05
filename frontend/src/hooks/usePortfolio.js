@@ -17,6 +17,8 @@ export function usePortfolio(walletAddress) {
     revenue: null,
     logs: [],
     aiInsights: [],
+    healthScore: null,
+    summary: "",
     loading: false,
     error: null,
   });
@@ -46,7 +48,7 @@ export function usePortfolio(walletAddress) {
       if (positions.length > 0) {
         try {
           const aiRes = await analyzePortfolio(positions, overview);
-          setState((s) => ({ ...s, aiInsights: aiRes.insights || [] }));
+          setState((s) => ({ ...s, aiInsights: aiRes.insights || [], healthScore: aiRes.healthScore ?? null, summary: aiRes.summary || "" }));
         } catch {
           // Non-critical — ignore AI errors
         }
