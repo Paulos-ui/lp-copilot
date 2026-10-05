@@ -2,7 +2,7 @@
 
 **Solana liquidity intelligence that helps LPs understand, decide and act.**
 
-LP Copilot is an accelerator-ready decision-support workspace for Solana liquidity providers. It combines live wallet/LP data, Claude-powered portfolio reasoning and Meteora execution into one human-controlled workflow: **read → reason → review → approve → prove**.
+LP Copilot is an accelerator-ready decision-support workspace for Solana liquidity providers. It combines live wallet/LP data, agent-powered portfolio reasoning and Meteora execution into one human-controlled workflow: **read → reason → review → approve → prove**.
 
 ## Why it exists
 
