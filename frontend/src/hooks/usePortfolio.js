@@ -5,6 +5,7 @@ import {
   getPositionRevenue,
   getPositionLogs,
   analyzePortfolio,
+  getWalletSummary,
 } from "../lib/api";
 
 /**
@@ -21,6 +22,7 @@ export function usePortfolio(walletAddress) {
     summary: "",
     loading: false,
     error: null,
+    walletSummary: null,
   });
 
   const load = useCallback(async () => {
@@ -30,19 +32,21 @@ export function usePortfolio(walletAddress) {
 
     try {
       // Parallel fetch everything
-      const [posRes, overviewRes, revenueRes, logsRes] = await Promise.allSettled([
+      const [posRes, overviewRes, revenueRes, logsRes, walletRes] = await Promise.allSettled([
         getOpenPositions(walletAddress),
         getOverviewMetrics(walletAddress),
         getPositionRevenue(walletAddress, "7D"),
         getPositionLogs(walletAddress),
+        getWalletSummary(walletAddress),
       ]);
 
       const positions = posRes.status === "fulfilled" ? posRes.value.data || [] : [];
       const overview = overviewRes.status === "fulfilled" ? overviewRes.value.data : null;
       const revenue = revenueRes.status === "fulfilled" ? revenueRes.value.data : null;
       const logs = logsRes.status === "fulfilled" ? logsRes.value.data || [] : [];
+      const walletSummary = walletRes.status === "fulfilled" ? walletRes.value : null;
 
-      setState((s) => ({ ...s, positions, overview, revenue, logs, loading: false }));
+      setState((s) => ({ ...s, positions, overview, revenue, logs, walletSummary, loading: false }));
 
       // Load AI insights in the background
       if (positions.length > 0) {

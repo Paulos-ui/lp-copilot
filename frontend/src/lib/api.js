@@ -28,6 +28,8 @@ async function apiFetch(path, options = {}) {
   return data;
 }
 
+export const getWalletSummary = (owner) => apiFetch(`/wallet/summary?owner=${owner}`);
+
 // ─── Positions ───────────────────────────────────────────────
 
 export const getOpenPositions = (owner) =>
