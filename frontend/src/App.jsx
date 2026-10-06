@@ -12,7 +12,7 @@ const pct=n=>Number.isFinite(Number(n))?`${Number(n)>=0?"+":""}${Number(n).toFix
 const pair=p=>p?.name||p?.pool_name||`${p?.token0_symbol||p?.tokenName0||"SOL"} / ${p?.token1_symbol||p?.tokenName1||"USDC"}`;
 const poolId=p=>p?.id||p?.pool_id||p?.address||p?.poolAddress;
 
-function Mark(){return <div className="mark"><span>LP</span><i/></div>}
+function Mark(){return <div className="mark"><img src="/lp-mark.svg" alt="" aria-hidden="true"/></div>}
 function Arrow(){return <span aria-hidden>↗</span>}
 
 function Landing({onEnter}){
