@@ -17,7 +17,7 @@ function Arrow(){return <span aria-hidden>↗</span>}
 
 function Landing({onEnter}){
   return <main className="landing">
-    <nav className="land-nav"><div className="brand"><Mark/><span>LP Copilot</span></div><div className="nav-mid"><a href="#product">Product</a><a href="#method">Method</a><a href="#build">Build</a></div><button className="text-btn" onClick={onEnter}>Open workspace <Arrow/></button></nav>
+    <nav className="land-nav"><div className="brand brand-lockup"><Mark/><span>LP Copilot</span><i className="brand-divider" aria-hidden="true"/></div><div className="nav-mid"><a href="#product">Product</a><a href="#method">Method</a><a href="#build">Build</a></div><button className="text-btn" onClick={onEnter}>Open workspace <Arrow/></button></nav>
     <section className="hero">
       <div className="hero-kicker"><span className="pulse"/> BUILT ON SOLANA · LONDON 2026</div>
       <h1>Liquidity decisions,<br/><em>without the noise.</em></h1>
